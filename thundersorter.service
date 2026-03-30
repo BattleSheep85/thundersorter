@@ -1,0 +1,14 @@
+[Unit]
+Description=Thundersorter - Email classification service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/chris/projects/thundersorter
+ExecStart=/home/chris/projects/thundersorter/.venv/bin/python -m service.main
+Restart=on-failure
+RestartSec=5
+Environment=THUNDERSORTER_GEMINI_API_KEY=
+
+[Install]
+WantedBy=default.target
