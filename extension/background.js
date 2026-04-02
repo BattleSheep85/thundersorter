@@ -1,28 +1,45 @@
-const DEFAULT_SERVICE_URL = "http://127.0.0.1:8465";
-const RETRY_INTERVAL_MS = 60_000;
-const BATCH_SIZE = 10;
-const TAG_PREFIX = "ts_";
+import {
+  TAG_PREFIX,
+  TAG_COLORS,
+  DEFAULT_TAGS,
+  BATCH_SIZE,
+  RETRY_INTERVAL_MS,
+  BUILTIN_PROVIDERS,
+} from "./common.js";
 
-const TAG_COLORS = {
-  finance: "#2E7D32",
-  receipts: "#1565C0",
-  newsletters: "#6A1B9A",
-  social: "#E91E63",
-  work: "#F57F17",
-  personal: "#00838F",
-  notifications: "#78909C",
-  shipping: "#4E342E",
-  travel: "#00695C",
-  promotions: "#D84315",
-};
+import * as gemini from "./providers/gemini.js";
+import * as openai from "./providers/openai.js";
+import * as anthropic from "./providers/anthropic.js";
 
-const DEFAULT_TAGS = Object.keys(TAG_COLORS);
+const providers = { gemini, openai, anthropic };
+
+let cancelRequested = false;
 
 // --- Storage helpers ---
 
-async function getServiceUrl() {
-  const { serviceUrl } = await messenger.storage.local.get({ serviceUrl: DEFAULT_SERVICE_URL });
-  return serviceUrl;
+async function getActiveProvider() {
+  const { activeProvider, providerConfigs } = await messenger.storage.local.get({
+    activeProvider: "",
+    providerConfigs: {},
+  });
+
+  if (!activeProvider || !providerConfigs[activeProvider]) {
+    return null;
+  }
+
+  const stored = providerConfigs[activeProvider];
+  const builtin = BUILTIN_PROVIDERS[activeProvider];
+  const kind = stored.kind || builtin?.kind || activeProvider;
+  const mod = providers[kind];
+  if (!mod) return null;
+
+  // Merge baseUrl from builtin definition if not in stored config
+  const config = {
+    ...stored,
+    baseUrl: stored.baseUrl || builtin?.baseUrl || "",
+  };
+
+  return { name: activeProvider, kind, config, mod };
 }
 
 async function getCustomTags() {
@@ -95,59 +112,44 @@ async function extractBody(messageId) {
 async function classifyMessage(message) {
   if (hasThundersorterTags(message)) return;
 
-  const serviceUrl = await getServiceUrl();
+  const provider = await getActiveProvider();
+  if (!provider) {
+    console.warn("Thundersorter: no provider configured");
+    return;
+  }
+
   const tags = await getCustomTags();
   const body = await extractBody(message.id);
 
-  let response;
+  let resultTags;
   try {
-    response = await fetch(`${serviceUrl}/classify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subject: message.subject || "",
-        sender: message.author || "",
-        body: body,
-        message_id: String(message.id),
-        tags: tags,
-      }),
-    });
-  } catch {
-    console.warn(`Thundersorter: service unreachable, queuing message ${message.id}`);
+    resultTags = await provider.mod.classify(
+      provider.config,
+      message.subject || "",
+      message.author || "",
+      body,
+      tags,
+    );
+  } catch (err) {
+    console.warn(`Thundersorter: classify failed, queuing message ${message.id}:`, err.message);
     await addToRetryQueue(message.id);
     return;
   }
 
-  if (!response.ok) {
-    console.error(`Thundersorter: classify failed (${response.status})`);
-    await addToRetryQueue(message.id);
-    return;
-  }
+  if (!resultTags || resultTags.length === 0) return;
 
-  const result = await response.json();
-  if (!result.tags || result.tags.length === 0) return;
-
-  await applyTags(message, result.tags);
-  console.log(`Thundersorter: tagged "${message.subject}" with [${result.tags.join(", ")}]`);
+  await applyTags(message, resultTags);
+  console.log(`Thundersorter: tagged "${message.subject}" with [${resultTags.join(", ")}]`);
 }
 
 // --- Retry queue processing ---
-
-async function isServiceHealthy() {
-  const serviceUrl = await getServiceUrl();
-  try {
-    const response = await fetch(`${serviceUrl}/health`);
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
 
 async function processRetryQueue() {
   const queue = await getRetryQueue();
   if (queue.length === 0) return;
 
-  if (!(await isServiceHealthy())) return;
+  const provider = await getActiveProvider();
+  if (!provider) return;
 
   console.log(`Thundersorter: retrying ${queue.length} queued message(s)`);
   const remaining = [];
@@ -166,60 +168,115 @@ async function processRetryQueue() {
   await setRetryQueue(remaining);
 }
 
-// --- Batch classification ---
+// --- Progress window ---
 
-async function classifyBatch(messages) {
-  const serviceUrl = await getServiceUrl();
+async function openProgressWindow() {
+  const win = await messenger.windows.create({
+    url: "progress/progress.html",
+    type: "popup",
+    width: 420,
+    height: 240,
+  });
+  return win.id;
+}
+
+function sendProgress(windowId, processed, total, tagged, currentSubject) {
+  messenger.runtime.sendMessage({
+    type: "classify-progress",
+    processed,
+    total,
+    tagged,
+    currentSubject,
+  }).catch(() => {});
+}
+
+function sendDone(windowId, total, tagged, cancelled) {
+  messenger.runtime.sendMessage({
+    type: "classify-done",
+    total,
+    tagged,
+    cancelled,
+  }).catch(() => {});
+}
+
+// --- Cancel listener ---
+
+messenger.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "cancel-classify") {
+    cancelRequested = true;
+  }
+});
+
+// --- Batch classification with progress ---
+
+async function classifyBatchWithProgress(messages) {
+  cancelRequested = false;
+
+  const provider = await getActiveProvider();
+  if (!provider) {
+    console.warn("Thundersorter: no provider configured");
+    return 0;
+  }
+
+  const windowId = await openProgressWindow();
   const tags = await getCustomTags();
 
   const untagged = messages.filter((m) => !hasThundersorterTags(m));
-  if (untagged.length === 0) return 0;
+  const total = untagged.length;
 
-  let classified = 0;
+  if (total === 0) {
+    sendDone(windowId, 0, 0, false);
+    return 0;
+  }
+
+  let processed = 0;
+  let tagged = 0;
+
+  sendProgress(windowId, 0, total, 0, "");
+
   for (let i = 0; i < untagged.length; i += BATCH_SIZE) {
+    if (cancelRequested) {
+      console.log("Thundersorter: classification cancelled by user");
+      sendDone(windowId, total, tagged, true);
+      return tagged;
+    }
+
     const batch = untagged.slice(i, i + BATCH_SIZE);
+
+    sendProgress(windowId, processed, total, tagged, batch[0]?.subject || "");
+
     const emails = [];
     for (const msg of batch) {
       const body = await extractBody(msg.id);
       emails.push({
         subject: msg.subject || "",
         sender: msg.author || "",
-        body: body,
-        message_id: String(msg.id),
+        body,
       });
     }
 
     try {
-      const response = await fetch(`${serviceUrl}/classify-batch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emails, tags }),
-      });
-
-      if (!response.ok) {
-        console.error(`Thundersorter: batch classify failed (${response.status})`);
-        continue;
-      }
-
-      const data = await response.json();
-      for (let j = 0; j < data.results.length; j++) {
-        const result = data.results[j];
-        if (result.tags && result.tags.length > 0) {
-          await applyTags(batch[j], result.tags);
-          classified++;
+      const tagLists = await provider.mod.classifyBatch(provider.config, emails, tags);
+      for (let j = 0; j < tagLists.length; j++) {
+        if (tagLists[j] && tagLists[j].length > 0) {
+          await applyTags(batch[j], tagLists[j]);
+          tagged++;
         }
       }
     } catch (err) {
-      console.error("Thundersorter: batch classify error:", err);
+      console.error("Thundersorter: batch classify error:", err.message);
     }
 
-    console.log(
-      `Thundersorter: batch progress ${Math.min(i + BATCH_SIZE, untagged.length)}/${untagged.length}`
-    );
+    processed += batch.length;
+    sendProgress(windowId, processed, total, tagged, "");
   }
 
-  return classified;
+  sendDone(windowId, total, tagged, false);
+  console.log(`Thundersorter: classified ${tagged} of ${total} message(s)`);
+  return tagged;
 }
+
+// --- Folder classification ---
 
 async function classifyFolder(tab) {
   const folder = tab.displayedFolder;
@@ -236,8 +293,7 @@ async function classifyFolder(tab) {
     allMessages.push(...page.messages);
   }
 
-  const count = await classifyBatch(allMessages);
-  console.log(`Thundersorter: classified ${count} message(s) in "${folder.path}"`);
+  await classifyBatchWithProgress(allMessages);
 }
 
 // --- Context menu ---
@@ -252,10 +308,14 @@ messenger.menus.onClicked.addListener(async (info) => {
   if (info.menuItemId !== "thundersorter-classify") return;
   if (!info.selectedMessages || info.selectedMessages.messages.length === 0) return;
 
-  const messages = info.selectedMessages.messages;
-  console.log(`Thundersorter: classifying ${messages.length} selected message(s)`);
-  const count = await classifyBatch(messages);
-  console.log(`Thundersorter: classified ${count} of ${messages.length} selected message(s)`);
+  let page = info.selectedMessages;
+  const allMessages = [...page.messages];
+  while (page.id) {
+    page = await messenger.messages.continueList(page.id);
+    allMessages.push(...page.messages);
+  }
+
+  await classifyBatchWithProgress(allMessages);
 });
 
 // --- Toolbar action (classify current folder) ---

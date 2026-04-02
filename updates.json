@@ -1,0 +1,12 @@
+{
+  "addons": {
+    "thundersorter@local": {
+      "updates": [
+        {
+          "version": "0.2.0",
+          "update_link": "https://github.com/Chrisputer/thundersorter/releases/download/v0.2.0/thundersorter.xpi"
+        }
+      ]
+    }
+  }
+}

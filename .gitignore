@@ -1,3 +1,15 @@
+# Secrets — never commit these
+.env
+.env.*
+*.key
+*.pem
+credentials.*
+secrets.*
+
+# Build output
+*.xpi
+
+# Python (legacy, can remove later)
 __pycache__/
 *.py[cod]
 *$py.class
@@ -5,5 +17,7 @@ __pycache__/
 dist/
 .venv/
 venv/
-.env
-*.xpi
+
+# IDE
+.vscode/
+.idea/

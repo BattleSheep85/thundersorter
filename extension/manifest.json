@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Thundersorter",
-  "version": "0.1.0",
-  "description": "Auto-tag emails using Google Gemini AI",
+  "version": "0.2.0",
+  "description": "Auto-tag emails using AI",
   "author": "Chris",
   "permissions": [
     "messagesRead",
@@ -14,7 +14,14 @@
     "menus"
   ],
   "host_permissions": [
-    "http://127.0.0.1:8465/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.fireworks.ai/*",
+    "https://openrouter.ai/*",
+    "https://api.together.xyz/*",
+    "https://api.groq.com/*",
+    "http://localhost/*"
   ],
   "background": {
     "scripts": ["background.js"],
@@ -33,6 +40,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "thundersorter@local",
+      "update_url": "https://raw.githubusercontent.com/Chrisputer/thundersorter/main/updates.json",
       "strict_min_version": "128.0"
     }
   }

@@ -12,18 +12,19 @@
       color: #1a1a1a;
     }
     h1 { font-size: 1.3em; }
-    h2 { font-size: 1.1em; margin-top: 24px; }
+    h2 { font-size: 1.1em; margin-top: 28px; }
     label { display: block; margin-top: 12px; font-weight: 600; }
-    input[type="text"] {
+    input[type="text"], input[type="password"], select {
       width: 100%;
       padding: 6px 8px;
       margin-top: 4px;
       border: 1px solid #ccc;
       border-radius: 4px;
       box-sizing: border-box;
+      font-family: inherit;
     }
     .status {
-      margin-top: 16px;
+      margin-top: 12px;
       padding: 8px 12px;
       border-radius: 4px;
       display: none;
@@ -40,9 +41,7 @@
       cursor: pointer;
     }
     button:hover { background: #0d47a1; }
-    button.secondary {
-      background: #607d8b;
-    }
+    button.secondary { background: #607d8b; }
     button.secondary:hover { background: #455a64; }
     button.danger {
       background: #c62828;
@@ -52,6 +51,25 @@
     }
     button.danger:hover { background: #b71c1c; }
 
+    .hint {
+      font-size: 0.85em;
+      color: #666;
+      margin-top: 4px;
+    }
+    .hint a { color: #1565c0; }
+
+    .hidden { display: none !important; }
+
+    .advanced-toggle {
+      font-size: 0.85em;
+      color: #1565c0;
+      cursor: pointer;
+      margin-top: 8px;
+      display: inline-block;
+    }
+    .advanced-toggle:hover { text-decoration: underline; }
+
+    /* Tags */
     .tag-list {
       list-style: none;
       padding: 0;
@@ -68,43 +86,63 @@
       font-family: monospace;
       font-size: 0.95em;
     }
-    .add-tag-row {
+    .add-row {
       display: flex;
       gap: 8px;
       margin-top: 8px;
     }
-    .add-tag-row input {
+    .add-row input {
       flex: 1;
       margin: 0;
     }
-    .add-tag-row button {
+    .add-row button {
       margin: 0;
       flex-shrink: 0;
     }
-    .hint {
-      font-size: 0.85em;
-      color: #666;
-      margin-top: 4px;
+    #modelSelect {
+      height: 180px;
+    }
+    #modelFilter {
+      margin-bottom: 4px;
     }
   </style>
 </head>
 <body>
   <h1>Thundersorter Settings</h1>
 
-  <label for="serviceUrl">Service URL</label>
-  <input type="text" id="serviceUrl" placeholder="http://127.0.0.1:8465">
+  <h2>AI Provider</h2>
+
+  <label for="provider">Provider</label>
+  <select id="provider">
+    <option value="" disabled selected>Choose a provider...</option>
+  </select>
+
+  <div id="apiKeyGroup">
+    <label for="apiKey">API Key</label>
+    <input type="password" id="apiKey" placeholder="Paste your API key">
+    <p class="hint" id="keyHint"></p>
+  </div>
 
   <div style="margin-top: 12px;">
     <button id="save">Save</button>
-    <button id="test" class="secondary">Test Connection</button>
   </div>
 
   <div id="status" class="status"></div>
 
+  <span class="advanced-toggle" id="advancedToggle">Advanced options</span>
+  <div id="advancedSection" class="hidden">
+    <label for="modelFilter">Model</label>
+    <input type="text" id="modelFilter" placeholder="Type to filter models...">
+    <select id="modelSelect" size="10">
+      <option value="">Save first to load models</option>
+    </select>
+    <p class="hint">Models are fetched from your provider. The best option is selected automatically.</p>
+  </div>
+
   <h2>Tags</h2>
   <p class="hint">Emails will be classified into these categories.</p>
   <ul id="tagList" class="tag-list"></ul>
-  <div class="add-tag-row">
+  <div class="add-row">
     <input type="text" id="newTag" placeholder="Add a tag (e.g., invoices)">
     <button id="addTag">Add</button>
   </div>
@@ -112,6 +150,6 @@
     <button id="resetTags" class="secondary">Reset to Defaults</button>
   </div>
 
-  <script src="options.js"></script>
+  <script src="options.js" type="module"></script>
 </body>
 </html>
