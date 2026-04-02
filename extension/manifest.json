@@ -40,7 +40,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "thundersorter@local",
-      "update_url": "https://raw.githubusercontent.com/Chrisputer/thundersorter/main/updates.json",
+      "update_url": "https://raw.githubusercontent.com/BattleSheep85/thundersorter/main/updates.json",
       "strict_min_version": "128.0"
     }
   }

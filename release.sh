@@ -40,7 +40,7 @@ cat > updates.json <<EOF
       "updates": [
         {
           "version": "$VERSION",
-          "update_link": "https://github.com/Chrisputer/thundersorter/releases/download/v$VERSION/thundersorter.xpi"
+          "update_link": "https://github.com/BattleSheep85/thundersorter/releases/download/v$VERSION/thundersorter.xpi"
         }
       ]
     }
