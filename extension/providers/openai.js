@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags } from "../common.js";
+import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, safeParseJSON, apiError } from "../common.js";
 
 async function chatCompletion(config, systemPrompt, userContent) {
   const url = `${config.baseUrl || "https://api.openai.com/v1"}/chat/completions`;
@@ -23,18 +23,21 @@ async function chatCompletion(config, systemPrompt, userContent) {
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`API error (${response.status}): ${err}`);
+    throw new Error(apiError(response.status, await response.text()));
   }
 
   const data = await response.json();
-  return data.choices[0].message.content;
+  const text = data?.choices?.[0]?.message?.content;
+  if (typeof text !== "string") {
+    throw new Error("Unexpected response structure from API");
+  }
+  return text;
 }
 
 export async function classify(config, subject, sender, body, tags) {
   const prompt = SYSTEM_PROMPT.replace("{tags}", tags.join(", "));
   const text = await chatCompletion(config, prompt, formatEmail(subject, sender, body));
-  const result = JSON.parse(text);
+  const result = safeParseJSON(text);
   return filterTags(result.tags || [], tags);
 }
 
@@ -45,7 +48,7 @@ export async function classifyBatch(config, emails, tags) {
     .join("\n---\n");
 
   const text = await chatCompletion(config, prompt, numbered);
-  const result = JSON.parse(text);
+  const result = safeParseJSON(text);
   return (result.results || []).map((r) => filterTags(r.tags || [], tags));
 }
 

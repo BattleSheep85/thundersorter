@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run tests
+        run: node --test tests/*.test.js
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for leaked secrets
+        run: |
+          if git grep -l 'AIza\|sk-ant-\|sk-proj-\|sk-or-' -- ':!.env*' ':!.gitignore' ':!release.sh' ':!.github/workflows/ci.yml'; then
+            echo "ERROR: Possible API key found in tracked files."
+            exit 1
+          fi
+          echo "No secrets found."
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [test, secret-scan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build .xpi
+        run: |
+          cd extension
+          zip -r ../thundersorter.xpi . -x '*.git*'
+          echo "Built thundersorter.xpi ($(stat -c%s ../thundersorter.xpi) bytes)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: thundersorter.xpi
+          path: thundersorter.xpi

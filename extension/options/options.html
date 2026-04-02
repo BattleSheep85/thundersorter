@@ -60,6 +60,20 @@
 
     .hidden { display: none !important; }
 
+    .consent-banner {
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 0.92em;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .consent-banner p { margin: 0; }
+    .consent-banner.ok { background: #e8f5e9; color: #2e7d32; }
+    .consent-banner.warn { background: #fff3e0; color: #e65100; }
+
     .advanced-toggle {
       font-size: 0.85em;
       color: #1565c0;
@@ -109,6 +123,11 @@
 </head>
 <body>
   <h1>Thundersorter Settings</h1>
+
+  <div id="consentBanner" class="consent-banner hidden">
+    <p id="consentMessage"></p>
+    <button id="reviewConsent" class="secondary">Review data consent</button>
+  </div>
 
   <h2>AI Provider</h2>
 

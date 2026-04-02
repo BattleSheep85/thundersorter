@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="${1:-}"
+REPO="BattleSheep85/thundersorter"
 
 if [[ -z "$VERSION" ]]; then
   echo "Usage: ./release.sh <version>"
@@ -31,7 +32,19 @@ cd "$SCRIPT_DIR"
 sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" extension/manifest.json
 echo "Bumped extension/manifest.json to $VERSION"
 
-# --- Update updates.json ---
+# --- Build .xpi ---
+
+./build.sh
+echo "Built thundersorter.xpi"
+
+# --- Compute hash for update verification ---
+
+XPI_HASH=$(sha256sum thundersorter.xpi | cut -d' ' -f1)
+echo "SHA-256: $XPI_HASH"
+
+# --- Update updates.json with hash ---
+
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/thundersorter.xpi"
 
 cat > updates.json <<EOF
 {
@@ -40,7 +53,13 @@ cat > updates.json <<EOF
       "updates": [
         {
           "version": "$VERSION",
-          "update_link": "https://github.com/BattleSheep85/thundersorter/releases/download/v$VERSION/thundersorter.xpi"
+          "update_link": "$DOWNLOAD_URL",
+          "update_hash": "sha256:$XPI_HASH",
+          "applications": {
+            "gecko": {
+              "strict_min_version": "128.0"
+            }
+          }
         }
       ]
     }
@@ -48,11 +67,6 @@ cat > updates.json <<EOF
 }
 EOF
 echo "Updated updates.json for v$VERSION"
-
-# --- Build .xpi ---
-
-./build.sh
-echo "Built thundersorter.xpi"
 
 # --- Commit, tag, push ---
 

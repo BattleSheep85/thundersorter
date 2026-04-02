@@ -100,3 +100,25 @@ export function formatEmail(subject, sender, body) {
 export function filterTags(tags, allowed) {
   return tags.filter((t) => allowed.includes(t));
 }
+
+/**
+ * Build a safe error message from an API response.
+ * Truncates to avoid leaking large payloads or echoed credentials.
+ */
+export function apiError(status, body) {
+  const safe = (body || "").slice(0, 200);
+  return `API error (${status}): ${safe}`;
+}
+
+/**
+ * Safely parse JSON from an AI provider response.
+ * Some providers wrap JSON in markdown code fences — strip those first.
+ */
+export function safeParseJSON(text) {
+  let cleaned = text.trim();
+  // Strip markdown code fences that some providers add
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+  }
+  return JSON.parse(cleaned);
+}

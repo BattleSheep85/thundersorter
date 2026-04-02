@@ -4,6 +4,24 @@ let currentTags = [];
 let providerConfigs = {};
 let activeProvider = "";
 
+// --- Consent status ---
+
+async function loadConsentStatus() {
+  const { dataConsentGiven } = await messenger.storage.local.get({ dataConsentGiven: false });
+  const banner = document.getElementById("consentBanner");
+  const message = document.getElementById("consentMessage");
+
+  banner.classList.remove("hidden", "ok", "warn");
+
+  if (dataConsentGiven) {
+    banner.classList.add("ok");
+    message.textContent = "Data consent: enabled. Email data will be sent to your AI provider for classification.";
+  } else {
+    banner.classList.add("warn");
+    message.textContent = "Data consent: not given. Classification is disabled until you consent.";
+  }
+}
+
 // --- Storage ---
 
 async function loadAll() {
@@ -19,6 +37,7 @@ async function loadAll() {
 
   buildProviderDropdown();
   renderTags();
+  loadConsentStatus();
 
   if (activeProvider) {
     document.getElementById("provider").value = activeProvider;
@@ -68,7 +87,14 @@ function onProviderChange() {
   // Key hint
   const hint = document.getElementById("keyHint");
   if (info?.keyUrl) {
-    hint.innerHTML = `Get a key at <a href="${info.keyUrl}" target="_blank">${new URL(info.keyUrl).hostname}</a>`;
+    hint.textContent = "";
+    const text = document.createTextNode("Get a key at ");
+    const link = document.createElement("a");
+    link.href = info.keyUrl;
+    link.target = "_blank";
+    link.textContent = new URL(info.keyUrl).hostname;
+    hint.appendChild(text);
+    hint.appendChild(link);
   } else {
     hint.textContent = "";
   }
@@ -205,6 +231,14 @@ document.getElementById("save").addEventListener("click", async () => {
     return;
   }
 
+  // Check consent before allowing provider setup
+  const { dataConsentGiven } = await messenger.storage.local.get({ dataConsentGiven: false });
+  if (!dataConsentGiven) {
+    showStatus("Please review and accept the data consent first.", false);
+    messenger.tabs.create({ url: "../consent/consent.html" });
+    return;
+  }
+
   showStatus("Connecting and fetching models...", true);
 
   try {
@@ -275,6 +309,17 @@ document.getElementById("resetTags").addEventListener("click", () => {
   currentTags = [...DEFAULT_TAGS];
   renderTags();
   saveTags();
+});
+
+document.getElementById("reviewConsent").addEventListener("click", () => {
+  messenger.tabs.create({ url: "../consent/consent.html" });
+});
+
+// Refresh consent status when storage changes (e.g., user accepts consent in another tab)
+messenger.storage.onChanged.addListener((changes) => {
+  if (changes.dataConsentGiven) {
+    loadConsentStatus();
+  }
 });
 
 loadAll();

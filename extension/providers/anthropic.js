@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags } from "../common.js";
+import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, safeParseJSON, apiError } from "../common.js";
 
 const JSON_INSTRUCTION = '\nRespond with ONLY a JSON object. No other text.\n';
 
@@ -26,12 +26,15 @@ async function createMessage(config, systemPrompt, userContent) {
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Anthropic API error (${response.status}): ${err}`);
+    throw new Error(apiError(response.status, await response.text()));
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  const text = data?.content?.[0]?.text;
+  if (typeof text !== "string") {
+    throw new Error("Unexpected response structure from Anthropic API");
+  }
+  return text;
 }
 
 export async function classify(config, subject, sender, body, tags) {
@@ -41,7 +44,7 @@ export async function classify(config, subject, sender, body, tags) {
     '{"tags": [...]}\n';
 
   const text = await createMessage(config, prompt, formatEmail(subject, sender, body));
-  const result = JSON.parse(text);
+  const result = safeParseJSON(text);
   return filterTags(result.tags || [], tags);
 }
 
@@ -56,7 +59,7 @@ export async function classifyBatch(config, emails, tags) {
     .join("\n---\n");
 
   const text = await createMessage(config, prompt, numbered);
-  const result = JSON.parse(text);
+  const result = safeParseJSON(text);
   return (result.results || []).map((r) => filterTags(r.tags || [], tags));
 }
 
@@ -73,8 +76,7 @@ export async function fetchModels(config) {
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Anthropic error (${response.status}): ${err}`);
+      throw new Error(apiError(response.status, await response.text()));
     }
 
     const data = await response.json();

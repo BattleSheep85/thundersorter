@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Thundersorter — Data Consent</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 40px 24px;
+      color: #1a1a1a;
+      line-height: 1.6;
+      background: #fafafa;
+    }
+
+    h1 {
+      font-size: 1.5em;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #555;
+      font-size: 1em;
+      margin-bottom: 32px;
+    }
+
+    /* --- Data disclosure section --- */
+
+    .disclosure {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .disclosure h2 {
+      font-size: 1.15em;
+      margin-bottom: 12px;
+    }
+
+    .data-item {
+      display: flex;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .data-item:last-child { border-bottom: none; }
+
+    .data-icon {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: #e3f2fd;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1em;
+    }
+
+    .data-label {
+      font-weight: 600;
+      font-size: 0.95em;
+    }
+
+    .data-desc {
+      font-size: 0.88em;
+      color: #555;
+      margin-top: 2px;
+    }
+
+    /* --- What we DON'T do --- */
+
+    .assurance {
+      background: #f1f8e9;
+      border: 1px solid #c5e1a5;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      font-size: 0.92em;
+    }
+
+    .assurance h2 {
+      font-size: 1.05em;
+      margin-bottom: 10px;
+      color: #33691e;
+    }
+
+    .assurance ul {
+      margin: 0;
+      padding-left: 20px;
+      color: #444;
+    }
+
+    .assurance li {
+      margin-bottom: 4px;
+    }
+
+    /* --- Provider note --- */
+
+    .provider-note {
+      font-size: 0.88em;
+      color: #666;
+      margin-bottom: 28px;
+      padding: 0 4px;
+    }
+
+    .provider-note a {
+      color: #1565c0;
+    }
+
+    /* --- Buttons --- */
+
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    button {
+      padding: 14px 24px;
+      border: none;
+      border-radius: 6px;
+      font-size: 1em;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    #acceptBtn {
+      background: #1565c0;
+      color: white;
+    }
+    #acceptBtn:hover { background: #0d47a1; }
+
+    #declineBtn {
+      background: transparent;
+      color: #555;
+      border: 1px solid #ccc;
+      font-weight: 400;
+    }
+    #declineBtn:hover {
+      background: #f5f5f5;
+    }
+
+    .decline-note {
+      text-align: center;
+      font-size: 0.82em;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <h1>Thundersorter</h1>
+  <p class="subtitle">Before you start, please review how Thundersorter handles your data.</p>
+
+  <div class="disclosure">
+    <h2>What data is sent</h2>
+    <p style="font-size: 0.92em; color: #555; margin-bottom: 14px;">
+      To classify your emails, Thundersorter sends the following to the AI provider you choose:
+    </p>
+
+    <div class="data-item">
+      <div class="data-icon">S</div>
+      <div>
+        <div class="data-label">Email subject line</div>
+        <div class="data-desc">The subject of each email being classified.</div>
+      </div>
+    </div>
+
+    <div class="data-item">
+      <div class="data-icon">F</div>
+      <div>
+        <div class="data-label">Sender address</div>
+        <div class="data-desc">The "From" field (name and email address).</div>
+      </div>
+    </div>
+
+    <div class="data-item">
+      <div class="data-icon">B</div>
+      <div>
+        <div class="data-label">Email body (up to 4,000 characters)</div>
+        <div class="data-desc">The text content of the email. Only the first 4,000 characters are sent. Attachments are never sent.</div>
+      </div>
+    </div>
+
+    <div class="data-item">
+      <div class="data-icon">T</div>
+      <div>
+        <div class="data-label">Your tag list</div>
+        <div class="data-desc">The category names you've configured (e.g., "finance", "newsletters"). No personal data.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="assurance">
+    <h2>What Thundersorter does NOT do</h2>
+    <ul>
+      <li>Does not store your emails outside of Thunderbird</li>
+      <li>Does not send attachments, images, or file contents</li>
+      <li>Does not send any account credentials or passwords</li>
+      <li>Does not track you -- no analytics, no cookies, no device IDs</li>
+      <li>Does not share data with anyone other than your chosen AI provider</li>
+      <li>Does not work in the background without your knowledge -- you control when classification runs</li>
+    </ul>
+  </div>
+
+  <p class="provider-note">
+    Your data is sent directly to the AI provider you select (e.g., Google Gemini, OpenAI, Anthropic, or others).
+    Each provider has their own privacy policy. Thundersorter does not operate any servers and does not see your data.
+    All connections use HTTPS encryption (except local providers like Ollama which stay on your machine).
+  </p>
+
+  <div class="actions">
+    <button id="acceptBtn">I understand -- enable email classification</button>
+    <button id="declineBtn">No thanks -- I'll decide later</button>
+  </div>
+
+  <p class="decline-note">
+    If you decline, Thundersorter will not send any data. You can enable it later in the add-on preferences.
+  </p>
+
+  <script src="consent.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags } from "../common.js";
+import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, safeParseJSON, apiError } from "../common.js";
 
 const TAG_SCHEMA = {
   type: "OBJECT",
@@ -26,11 +26,14 @@ const BATCH_SCHEMA = {
 };
 
 async function generate(apiKey, model, systemPrompt, userContent, schema) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
     body: JSON.stringify({
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: userContent }] }],
@@ -43,12 +46,15 @@ async function generate(apiKey, model, systemPrompt, userContent, schema) {
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gemini API error (${response.status}): ${err}`);
+    throw new Error(apiError(response.status, await response.text()));
   }
 
   const data = await response.json();
-  return data.candidates[0].content.parts[0].text;
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof text !== "string") {
+    throw new Error("Unexpected response structure from Gemini API");
+  }
+  return text;
 }
 
 export async function classify(config, subject, sender, body, tags) {
@@ -60,7 +66,7 @@ export async function classify(config, subject, sender, body, tags) {
     formatEmail(subject, sender, body),
     TAG_SCHEMA,
   );
-  const result = JSON.parse(text);
+  const result = safeParseJSON(text);
   return filterTags(result.tags || [], tags);
 }
 
@@ -71,7 +77,7 @@ export async function classifyBatch(config, emails, tags) {
     .join("\n---\n");
 
   const text = await generate(config.apiKey, config.model, prompt, numbered, BATCH_SCHEMA);
-  const result = JSON.parse(text);
+  const result = safeParseJSON(text);
   return (result.results || []).map((r) => filterTags(r.tags || [], tags));
 }
 
@@ -80,12 +86,13 @@ export async function fetchModels(config) {
   let pageToken = "";
 
   for (;;) {
-    const params = `key=${config.apiKey}&pageSize=100${pageToken ? `&pageToken=${pageToken}` : ""}`;
+    const params = `pageSize=100${pageToken ? `&pageToken=${pageToken}` : ""}`;
     const url = `https://generativelanguage.googleapis.com/v1beta/models?${params}`;
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: { "x-goog-api-key": config.apiKey },
+    });
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Gemini error (${response.status}): ${err}`);
+      throw new Error(apiError(response.status, await response.text()));
     }
 
     const data = await response.json();

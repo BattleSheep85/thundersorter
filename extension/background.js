@@ -15,6 +15,27 @@ const providers = { gemini, openai, anthropic };
 
 let cancelRequested = false;
 
+// --- Consent gate ---
+
+async function hasConsent() {
+  const { dataConsentGiven } = await messenger.storage.local.get({ dataConsentGiven: false });
+  return dataConsentGiven === true;
+}
+
+async function showConsentPage() {
+  await messenger.tabs.create({ url: "consent/consent.html" });
+}
+
+// Show consent screen on first install or update that adds consent requirement
+messenger.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === "install" || details.reason === "update") {
+    const consented = await hasConsent();
+    if (!consented) {
+      await showConsentPage();
+    }
+  }
+});
+
 // --- Storage helpers ---
 
 async function getActiveProvider() {
@@ -47,6 +68,8 @@ async function getCustomTags() {
   return customTags || DEFAULT_TAGS;
 }
 
+const MAX_RETRY_QUEUE = 200;
+
 async function getRetryQueue() {
   const { retryQueue } = await messenger.storage.local.get({ retryQueue: [] });
   return retryQueue;
@@ -58,10 +81,15 @@ async function setRetryQueue(queue) {
 
 async function addToRetryQueue(messageId) {
   const queue = await getRetryQueue();
-  if (!queue.includes(messageId)) {
-    await setRetryQueue([...queue, messageId]);
-  }
+  if (queue.includes(messageId)) return;
+  // Cap queue size to prevent unbounded growth
+  const updated = [...queue, messageId].slice(-MAX_RETRY_QUEUE);
+  await setRetryQueue(updated);
 }
+
+// --- Deduplication: prevent classifying the same message concurrently ---
+
+const classifyingNow = new Set();
 
 // --- Tag helpers ---
 
@@ -94,6 +122,21 @@ async function applyTags(message, tags) {
 
 // --- Body extraction ---
 
+function stripHtml(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<head[\s\S]*?<\/head>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#?\w+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function extractBody(messageId) {
   const parts = await messenger.messages.listInlineTextParts(messageId);
   const textParts = parts.filter((p) => p.contentType === "text/plain");
@@ -102,7 +145,8 @@ async function extractBody(messageId) {
   }
   const htmlParts = parts.filter((p) => p.contentType === "text/html");
   if (htmlParts.length > 0) {
-    return htmlParts.map((p) => p.content).join("\n");
+    // Strip HTML to plain text before sending to LLM
+    return stripHtml(htmlParts.map((p) => p.content).join("\n"));
   }
   return "";
 }
@@ -111,6 +155,9 @@ async function extractBody(messageId) {
 
 async function classifyMessage(message) {
   if (hasThundersorterTags(message)) return;
+  if (classifyingNow.has(message.id)) return;
+
+  if (!(await hasConsent())) return;
 
   const provider = await getActiveProvider();
   if (!provider) {
@@ -118,54 +165,65 @@ async function classifyMessage(message) {
     return;
   }
 
-  const tags = await getCustomTags();
-  const body = await extractBody(message.id);
-
-  let resultTags;
+  classifyingNow.add(message.id);
   try {
-    resultTags = await provider.mod.classify(
+    const tags = await getCustomTags();
+    const body = await extractBody(message.id);
+
+    const resultTags = await provider.mod.classify(
       provider.config,
       message.subject || "",
       message.author || "",
       body,
       tags,
     );
+
+    if (!resultTags || resultTags.length === 0) return;
+
+    await applyTags(message, resultTags);
+    console.log(`Thundersorter: tagged message ${message.id} with [${resultTags.join(", ")}]`);
   } catch (err) {
     console.warn(`Thundersorter: classify failed, queuing message ${message.id}:`, err.message);
     await addToRetryQueue(message.id);
-    return;
+  } finally {
+    classifyingNow.delete(message.id);
   }
-
-  if (!resultTags || resultTags.length === 0) return;
-
-  await applyTags(message, resultTags);
-  console.log(`Thundersorter: tagged "${message.subject}" with [${resultTags.join(", ")}]`);
 }
 
 // --- Retry queue processing ---
 
+let retryInProgress = false;
+
 async function processRetryQueue() {
+  if (retryInProgress) return;
+  if (!(await hasConsent())) return;
+
   const queue = await getRetryQueue();
   if (queue.length === 0) return;
 
   const provider = await getActiveProvider();
   if (!provider) return;
 
-  console.log(`Thundersorter: retrying ${queue.length} queued message(s)`);
-  const remaining = [];
+  retryInProgress = true;
+  try {
+    console.log(`Thundersorter: retrying ${queue.length} queued message(s)`);
+    const remaining = [];
 
-  for (const messageId of queue) {
-    try {
-      const message = await messenger.messages.get(messageId);
-      if (hasThundersorterTags(message)) continue;
-      await classifyMessage(message);
-    } catch (err) {
-      console.warn(`Thundersorter: retry failed for message ${messageId}:`, err);
-      remaining.push(messageId);
+    for (const messageId of queue) {
+      try {
+        const message = await messenger.messages.get(messageId);
+        if (hasThundersorterTags(message)) continue;
+        await classifyMessage(message);
+      } catch (err) {
+        console.warn(`Thundersorter: retry failed for message ${messageId}:`, err.message);
+        remaining.push(messageId);
+      }
     }
-  }
 
-  await setRetryQueue(remaining);
+    await setRetryQueue(remaining);
+  } finally {
+    retryInProgress = false;
+  }
 }
 
 // --- Progress window ---
@@ -211,6 +269,12 @@ messenger.runtime.onMessage.addListener((msg) => {
 
 async function classifyBatchWithProgress(messages) {
   cancelRequested = false;
+
+  if (!(await hasConsent())) {
+    console.warn("Thundersorter: data consent not given, opening consent page");
+    await showConsentPage();
+    return 0;
+  }
 
   const provider = await getActiveProvider();
   if (!provider) {
@@ -265,6 +329,12 @@ async function classifyBatchWithProgress(messages) {
       }
     } catch (err) {
       console.error("Thundersorter: batch classify error:", err.message);
+      // Queue failed batch for individual retry
+      for (const msg of batch) {
+        if (!hasThundersorterTags(msg)) {
+          await addToRetryQueue(msg.id);
+        }
+      }
     }
 
     processed += batch.length;
@@ -331,7 +401,7 @@ messenger.messages.onNewMailReceived.addListener(async (_folder, messages) => {
     try {
       await classifyMessage(message);
     } catch (err) {
-      console.error(`Thundersorter: error processing "${message.subject}":`, err);
+      console.error(`Thundersorter: error processing message ${message.id}:`, err.message);
     }
   }
 });
