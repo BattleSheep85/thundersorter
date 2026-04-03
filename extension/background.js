@@ -365,7 +365,7 @@ async function classifyBatchWithProgress(messages) {
   }
 
   const windowId = await openProgressWindow();
-  const tags = await getCustomTags();
+  const allowedTags = await getCustomTags();
 
   const untagged = messages.filter((m) => !hasThundersorterTags(m));
   const total = untagged.length;
@@ -380,52 +380,58 @@ async function classifyBatchWithProgress(messages) {
 
   sendProgress(windowId, 0, total, 0, "");
 
-  for (let i = 0; i < untagged.length; i += BATCH_SIZE) {
+  for (const msg of untagged) {
     if (cancelRequested) {
       console.log("Thundersorter: classification cancelled by user");
       sendDone(windowId, total, tagged, true);
       return tagged;
     }
 
-    const batch = untagged.slice(i, i + BATCH_SIZE);
-
-    sendProgress(windowId, processed, total, tagged, batch[0]?.subject || "");
-
-    const emails = [];
-    for (const msg of batch) {
-      const body = await extractBody(msg.id);
-      emails.push({
-        subject: msg.subject || "",
-        sender: msg.author || "",
-        body,
-      });
-    }
+    sendProgress(windowId, processed, total, tagged, msg.subject || "");
 
     try {
-      const tagLists = await provider.mod.classifyBatch(provider.config, emails, tags);
-      for (let j = 0; j < tagLists.length; j++) {
-        if (tagLists[j] && tagLists[j].length > 0) {
-          await applyTags(batch[j], tagLists[j]);
-          tagged++;
+      // Tier 0: Header-based pre-classification
+      let resultTags = null;
+      try {
+        const headers = await getMessageHeaders(msg.id);
+        const headerTags = classifyFromHeaders(headers).filter((t) => allowedTags.includes(t));
+        if (headerTags.length > 0) resultTags = headerTags;
+      } catch (_) { /* header scan failed, continue */ }
+
+      // Tier 1: Sender cache
+      if (!resultTags) {
+        const cached = await lookupSenderCache(msg.author || "");
+        if (cached && cached.length > 0) {
+          const valid = cached.filter((t) => allowedTags.includes(t));
+          if (valid.length > 0) resultTags = valid;
         }
+      }
+
+      // Tier 2: LLM classification (individual call)
+      if (!resultTags) {
+        const body = await extractBody(msg.id);
+        const llmTags = await provider.mod.classify(
+          provider.config,
+          msg.subject || "",
+          msg.author || "",
+          body,
+          allowedTags,
+        );
+        if (llmTags && llmTags.length > 0) resultTags = llmTags;
+      }
+
+      if (resultTags && resultTags.length > 0) {
+        await applyTags(msg, resultTags);
+        await updateSenderCache(msg.author || "", resultTags);
+        tagged++;
       }
     } catch (err) {
-      console.error("Thundersorter: batch classify error:", err.message);
-      // Queue failed batch for individual retry
-      for (const msg of batch) {
-        if (!hasThundersorterTags(msg)) {
-          await addToRetryQueue(msg.id);
-        }
-      }
+      console.warn(`Thundersorter: classify failed for ${msg.id}:`, err.message);
+      await addToRetryQueue(msg.id);
     }
 
-    processed += batch.length;
+    processed++;
     sendProgress(windowId, processed, total, tagged, "");
-
-    // Brief pause between batches to avoid provider rate limits
-    if (i + BATCH_SIZE < untagged.length) {
-      await new Promise((r) => setTimeout(r, 1000));
-    }
   }
 
   sendDone(windowId, total, tagged, false);
