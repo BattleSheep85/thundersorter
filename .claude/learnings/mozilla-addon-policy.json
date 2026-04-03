@@ -1,0 +1,141 @@
+{
+  "domain": "mozilla-addon-policy",
+  "description": "Mozilla Add-on Distribution Agreement and Add-on Policies compliance requirements",
+  "file_patterns": [
+    "*.js",
+    "*.html",
+    "manifest.json"
+  ],
+  "entries": [
+    {
+      "id": "personal-data-explicit-opt-in-required",
+      "bad_pattern": "Sending email content (subject, sender, body) to third-party AI APIs without explicit user consent beyond installation",
+      "good_pattern": "Show a clear, unmissable consent screen immediately after installation that explains email data is sent to the selected AI provider, and get affirmative opt-in before any data leaves the extension",
+      "regex": null,
+      "description": "Mozilla policy classifies email content as personal data (names, email addresses, message bodies). Personal data transmission requires explicit affirmative opt-in — installation alone does NOT constitute consent. The consent UI must appear immediately after install, be single-page with all choices visible, clearly state what data is transmitted, and allow the user to decline without losing non-data-dependent functionality. This is Thundersorter's #1 compliance gap.",
+      "context": "extension/background.js — classifyMessage sends email content to AI providers",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "no-surprises-data-disclosure",
+      "bad_pattern": "Listing description says 'Auto-tag emails using AI' without disclosing that email content is sent to external services",
+      "good_pattern": "Listing description must clearly state: email subject, sender, and body are transmitted to third-party AI providers (name them) for classification",
+      "regex": null,
+      "description": "The 'No Surprises' policy requires that the add-on listing clearly disclose what the add-on does AND what information it transmits. Unexpected features unrelated to the primary function must be opt-in. For Thundersorter, the data transmission IS the primary function, so the listing must explicitly say email content leaves the browser and goes to external AI APIs. The description field in manifest.json and any AMO listing must reflect this.",
+      "context": "extension/manifest.json description field, AMO listing",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "encryption-required-for-remote-data",
+      "bad_pattern": "Allowing HTTP (non-TLS) connections to AI provider APIs",
+      "good_pattern": "All remote data transmission must use HTTPS. The only exception is localhost (Ollama) which is local-only.",
+      "regex": null,
+      "description": "Mozilla policy requires encryption when transporting data remotely. All built-in provider URLs use HTTPS except Ollama (http://localhost) which never leaves the machine. If a user ever configures a custom endpoint, it should be validated for HTTPS unless it's a localhost/127.0.0.1 address.",
+      "context": "extension/common.js BUILTIN_PROVIDERS, extension/providers/*.js fetch calls",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "no-remote-code-execution",
+      "bad_pattern": "Loading or executing code fetched from a remote server",
+      "good_pattern": "Extension must be fully self-contained — all JS bundled locally, only data (not code) fetched remotely",
+      "regex": "eval\\\\s*\\\\(|new\\\\s+Function\\\\s*\\\\(|import\\\\s*\\\\(\\\\s*['\\\"]https?:",
+      "description": "Mozilla policy prohibits loading remote code for execution. Extensions must be self-contained. Thundersorter correctly fetches only data (model lists, classification results) from remote APIs — no remote JS is loaded or eval'd. This must remain true in all future changes. Never use eval(), new Function(), or load scripts from CDNs.",
+      "context": "All extension JS files",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "minimal-permissions-only",
+      "bad_pattern": "Requesting permissions the extension doesn't strictly need",
+      "good_pattern": "Only request permissions actually used — audit manifest.json permissions against actual API usage",
+      "regex": null,
+      "description": "Mozilla policy requires requesting only necessary permissions. Thundersorter uses: messagesRead (read email content), accountsRead (list accounts/folders), messagesTags/messagesTagsList (read/write tags), messagesUpdate (apply tags), storage (persist config), menus (context menu). Each must be justified. If any permission is unused, remove it.",
+      "context": "extension/manifest.json permissions array",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "source-code-must-be-reviewable",
+      "bad_pattern": "Obfuscating, bundling, or minifying extension code without providing original source",
+      "good_pattern": "Keep all JS as plain readable source — no build step that obscures code. If transpiling is ever added, provide source and build instructions to Mozilla.",
+      "regex": null,
+      "description": "Mozilla requires all code to be reviewable. Obfuscated code is prohibited. Minification for size reduction is allowed but original source must be submitted. Thundersorter currently ships plain JS with no build step (good). If a bundler/transpiler is ever added, build instructions and pre-processed source must be submitted to Mozilla for review.",
+      "context": "All extension JS files, build.sh",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "private-browsing-no-data-storage",
+      "bad_pattern": "Storing or persisting data from private browsing sessions",
+      "good_pattern": "Never store data obtained during private browsing. Ensure no email classification results or metadata leak from private sessions.",
+      "regex": null,
+      "description": "Mozilla policy prohibits storing private browsing data. While Thunderbird's private browsing model differs from Firefox, the principle applies: no data from ephemeral/private contexts should be persisted. Also, information identifying users across sessions or containers must not reach web content.",
+      "context": "extension/background.js — data storage patterns",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "no-relaxing-security-headers",
+      "bad_pattern": "Modifying or relaxing Content Security Policy or other security headers on web pages",
+      "good_pattern": "Never modify CSP or security headers. Extension operates only on Thunderbird messages, not web pages.",
+      "regex": null,
+      "description": "Mozilla policy prohibits relaxing web page security headers including CSP. Thundersorter doesn't interact with web pages directly (it processes email messages), so this is currently fine. Must not add any content scripts that modify page security in future.",
+      "context": "extension/manifest.json, extension/background.js",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "consent-ui-design-requirements",
+      "bad_pattern": "Using popups, multi-step flows, reduced contrast, or hidden options for data consent",
+      "good_pattern": "Consent must be a single focused page (recommend new tab), all choices visible, clear readable text, prominent display, no deceptive design patterns",
+      "regex": null,
+      "description": "Mozilla has specific UI requirements for consent: must be 'unmissable' (recommend focused new tab, not popups), single-page with all choices visible, clearly readable fonts with full contrast, no hidden decline options, no multi-step decline flows. Separate choices required for personal vs technical data. Declining cannot restrict functionality beyond what requires the data. Must appear within the add-on itself (not external page).",
+      "context": "Consent UI implementation (not yet built)",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "accurate-description-no-mozilla-endorsement",
+      "bad_pattern": "Implying Mozilla/Thunderbird produces, sponsors, or endorses the add-on",
+      "good_pattern": "Description must be truthful and accurate. Never imply Mozilla endorsement. If using 'Thunderbird' in name, format as 'Thundersorter for Thunderbird'.",
+      "regex": null,
+      "description": "The distribution agreement prohibits implying Mozilla sponsorship/endorsement unless a written agreement exists. If using 'Firefox' (or by extension 'Thunderbird') in the add-on name, the format should be '<Add-on name> for Firefox/Thunderbird'. All descriptions must be truthful. Must comply with Mozilla Trademark Guidelines.",
+      "context": "extension/manifest.json name/description, AMO listing, README",
+      "discovered": "2026-04-02",
+      "severity": "LOW"
+    },
+    {
+      "id": "no-persistent-identifiers-or-analytics",
+      "bad_pattern": "Sending persistent identifiers, analytics beacons, cookies, or advertising IDs alongside email data",
+      "good_pattern": "Only send the minimum data needed for classification (email subject, sender, body). No tracking IDs, no analytics, no cookies sent to providers.",
+      "regex": null,
+      "description": "Under Mozilla's implicit consent conditions, data must be purpose-limited: limited to the content element the user acted upon, with no persistent identifiers, analytics beacons, cookies, or advertising IDs, and no unrelated data. Thundersorter must only send the email content needed for classification — nothing else. No user IDs, no device IDs, no session tracking.",
+      "context": "extension/providers/*.js — request payloads sent to AI APIs",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "self-distributed-signing-required",
+      "bad_pattern": "Distributing an unsigned .xpi for self-hosted installation",
+      "good_pattern": "All add-ons must be signed with a Mozilla Certificate to function, even self-distributed ones. Submit to AMO for signing or use the signing API.",
+      "regex": null,
+      "description": "The distribution agreement states ALL add-ons must be digitally signed with a Mozilla Certificate to function with Firefox/Thunderbird. For self-distributed add-ons, you submit the .xpi to AMO for signing (without listing it publicly) and receive a signed .xpi back. Without signing, the extension may only work in Developer Edition or with signature enforcement disabled. This is required for production distribution via GitHub Releases.",
+      "context": "release.sh, build.sh, GitHub Releases distribution",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "thunderbird-does-not-require-signing",
+      "bad_pattern": "Assuming Thunderbird extensions must be Mozilla-signed like Firefox extensions",
+      "good_pattern": "Thunderbird does NOT enforce extension signing (Bugzilla 1168571, closed WONTFIX 2018). Unsigned .xpi installs directly.",
+      "regex": null,
+      "description": "Unlike Firefox, Thunderbird decided against mandatory extension signing. Users can install unsigned .xpi files directly via Add-ons Manager > Install Add-on From File. AMO signing is optional for credibility. If you want to sign anyway, use web-ext sign --channel=unlisted with AMO JWT credentials. The update_hash field in updates.json provides integrity verification for auto-updates without needing Mozilla signing.",
+      "context": "release.sh, updates.json, distribution workflow",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    }
+  ]
+}

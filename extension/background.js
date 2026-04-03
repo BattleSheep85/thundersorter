@@ -141,9 +141,8 @@ async function routeMessageToFolder(message, tags) {
   if (!folderName) return;
 
   try {
-    // Get the account this message belongs to
-    const folder = await messenger.messages.get(message.id);
-    const msgFolder = folder.folder;
+    // Use message.folder if available, otherwise fetch it
+    const msgFolder = message.folder || (await messenger.messages.get(message.id)).folder;
     if (!msgFolder) return;
 
     const accounts = await messenger.accounts.list();

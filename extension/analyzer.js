@@ -101,9 +101,18 @@ export function parseTagSuggestions(llmResponse) {
       .map((t) => t.trim().toLowerCase().replace(/[^a-z0-9-]/g, ""))
       .filter((t) => t.length > 0 && t.length <= 30);
   } catch {
-    // Try extracting JSON from surrounding text
+    // Try extracting JSON from surrounding text (non-recursive to prevent stack overflow)
     const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) return parseTagSuggestions(match[0]);
+    if (match && match[0] !== cleaned) {
+      try {
+        const parsed = JSON.parse(match[0]);
+        const tags = parsed.tags || parsed.suggestions || parsed.categories || [];
+        return tags
+          .filter((t) => typeof t === "string")
+          .map((t) => t.trim().toLowerCase().replace(/[^a-z0-9-]/g, ""))
+          .filter((t) => t.length > 0 && t.length <= 30);
+      } catch { /* fall through */ }
+    }
     return [];
   }
 }

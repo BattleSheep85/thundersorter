@@ -336,9 +336,12 @@ document.getElementById("modeSelect").addEventListener("change", () => {
     currentTags = [...PRESETS[mode].tags];
     renderTags();
     saveTags();
+  } else {
+    saveTags();
   }
-  // "custom" keeps current tags unchanged
-  saveTags();
+  // Re-render priority list if folder routing is active
+  if (folderRoutingEnabled) renderPriorityList();
+  saveFolderRouting();
 });
 
 document.getElementById("resetTags").addEventListener("click", () => {
@@ -356,6 +359,7 @@ document.getElementById("reviewConsent").addEventListener("click", () => {
 
 let cachedSamples = [];
 let suggestedTags = [];
+let analyzeInProgress = false;
 
 function showAnalyzeStatus(message, ok) {
   const el = document.getElementById("analyzeStatus");
@@ -438,6 +442,11 @@ async function getAnalysisConfig() {
 }
 
 async function analyzeInbox() {
+  if (analyzeInProgress) return;
+  analyzeInProgress = true;
+  const analyzeBtn = document.getElementById("analyzeInbox");
+  analyzeBtn.disabled = true;
+
   const analyzeSection = document.getElementById("analyzeSection");
   analyzeSection.classList.remove("hidden");
   showAnalyzeStatus("Fetching emails from inbox...", true);
@@ -484,6 +493,9 @@ async function analyzeInbox() {
     }
   } catch (err) {
     showAnalyzeStatus(`Analysis failed: ${err.message}`, false);
+  } finally {
+    analyzeInProgress = false;
+    document.getElementById("analyzeInbox").disabled = false;
   }
 }
 
@@ -565,11 +577,14 @@ function renderPriorityList() {
       const from = e.dataTransfer.getData("text/plain");
       const to = tag;
       if (from === to) return;
-      const fromIdx = tagPriority.indexOf(from);
-      const toIdx = tagPriority.indexOf(to);
-      tagPriority = [...tagPriority];
-      tagPriority.splice(fromIdx, 1);
-      tagPriority.splice(toIdx, 0, from);
+      // Build new order: filter out dragged item, then insert at drop target position
+      const without = tagPriority.filter((t) => t !== from);
+      const dropIdx = without.indexOf(to);
+      tagPriority = [
+        ...without.slice(0, dropIdx),
+        from,
+        ...without.slice(dropIdx),
+      ];
       renderPriorityList();
       saveFolderRouting();
     });

@@ -1,0 +1,121 @@
+{
+  "domain": "thunderbird-extension",
+  "description": "Thunderbird WebExtension development gotchas and platform quirks",
+  "file_patterns": [
+    "*.js",
+    "*.html",
+    "manifest.json"
+  ],
+  "entries": [
+    {
+      "id": "fireworks-native-api-full-model-list",
+      "bad_pattern": "Using Fireworks OpenAI-compatible /models endpoint to list all models",
+      "good_pattern": "Use Fireworks native API at /v1/accounts/fireworks/models for the full catalog",
+      "regex": null,
+      "description": "Fireworks' OpenAI-compatible /v1/models endpoint returns only a truncated subset of available models. The native endpoint at /v1/accounts/fireworks/models returns the complete catalog with nextPageToken/pageToken pagination and a { models: [...] } response shape (not { data: [...] }).",
+      "context": "extension/providers/openai.js — fetchModels for Fireworks provider",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "fireworks-model-name-full-path",
+      "bad_pattern": "Stripping Fireworks model name prefix (accounts/fireworks/models/xxx → xxx) for cleaner display",
+      "good_pattern": "Keep the full model path (accounts/fireworks/models/xxx) — Fireworks chat completions API requires it",
+      "regex": null,
+      "description": "Fireworks native API returns model names like 'accounts/fireworks/models/llama-v3p1-8b-instruct'. The chat completions endpoint requires this full path as the model parameter. Stripping the prefix for display purposes breaks classification requests.",
+      "context": "extension/providers/openai.js — fetchNativeModels return value",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "xpi-required-for-production-install",
+      "bad_pattern": "Distributing a Thunderbird extension as a raw manifest.json directory for end users",
+      "good_pattern": "Package as .xpi (ZIP of extension directory) — only format Thunderbird accepts for production install",
+      "regex": null,
+      "description": "Thunderbird only accepts .xpi files for production add-on installation via 'Install Add-on From File'. A raw manifest.json directory can only be loaded as a temporary debug add-on which is removed on restart. An .xpi is just a ZIP archive of the extension directory contents.",
+      "context": "build.sh, release workflow",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "auto-update-via-update-url",
+      "bad_pattern": "No auto-update mechanism for self-distributed Thunderbird extensions",
+      "good_pattern": "Set browser_specific_settings.gecko.update_url in manifest.json pointing to a hosted updates.json",
+      "regex": null,
+      "description": "Thunderbird checks update_url periodically for new versions. The updates.json file must contain the addon ID, version, and update_link (URL to the .xpi). Host updates.json on GitHub raw (e.g. raw.githubusercontent.com/owner/repo/main/updates.json) and .xpi files as GitHub Release assets.",
+      "context": "extension/manifest.json, updates.json, release.sh",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "openai-compat-pagination-styles",
+      "bad_pattern": "Assuming all OpenAI-compatible /models endpoints use the same pagination",
+      "good_pattern": "Auto-detect pagination style from response: has_more+after (OpenAI), nextPageToken+pageToken (Fireworks/others), or no pagination",
+      "regex": null,
+      "description": "OpenAI-compatible providers use different pagination schemes. OpenAI uses has_more boolean + after cursor (last item's ID). Some providers use nextPageToken + pageToken. Some don't paginate at all. The fetchOpenAIModels function should detect the style from the first response and adapt.",
+      "context": "extension/providers/openai.js — fetchOpenAIModels",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "gemini-api-key-use-header-not-url",
+      "bad_pattern": "Passing Gemini API key as URL query parameter (?key=API_KEY)",
+      "good_pattern": "Use x-goog-api-key header instead — keeps key out of URLs, logs, and browser history",
+      "regex": "key=\\\\$\\\\{.*apiKey|\\\\?key=",
+      "description": "Google's Gemini REST API documents both query parameter (key=) and header (x-goog-api-key) authentication. The query parameter approach leaks the key in URL strings visible in proxy logs, browser devtools network tab, and error messages that include the URL. The header approach keeps the key out of URLs entirely. Always use the header.",
+      "context": "extension/providers/gemini.js — generate() and fetchModels()",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "strip-html-before-sending-to-llm",
+      "bad_pattern": "Sending raw HTML email body content to LLM providers",
+      "good_pattern": "Strip script/style/head tags and HTML markup before sending — reduces token waste and prompt injection surface",
+      "regex": null,
+      "description": "When no text/plain part exists, extractBody falls back to text/html. Raw HTML wastes tokens on markup and opens prompt injection vectors (hidden elements, HTML comments with adversarial instructions). Strip script, style, and head blocks first, then remove all HTML tags and decode entities before sending to the LLM.",
+      "context": "extension/background.js — extractBody() and stripHtml()",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "get-headers-api-tb147",
+      "bad_pattern": "Using messenger.messages.getFull() just to read email headers",
+      "good_pattern": "Use messenger.messages.getHeaders(messageId) for TB 147+, fall back to getFull().headers for TB 66+",
+      "regex": null,
+      "description": "messenger.messages.getHeaders() (TB 147+) returns all RFC822 headers without MIME parsing — significantly faster than getFull(). Returns HeadersDictionary with lowercase keys and string[] values. Only needs messagesRead permission. For TB < 147, fall back to messenger.messages.getFull(messageId).headers which also returns HeadersDictionary but does full MIME parsing.",
+      "context": "background.js, email header access",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "on-updated-fires-on-tag-changes",
+      "bad_pattern": "Assuming Thunderbird has no way to detect user tag changes",
+      "good_pattern": "Use messenger.messages.onUpdated listener — fires when tags change, with oldProperties (TB 137+)",
+      "regex": null,
+      "description": "messenger.messages.onUpdated fires with (message, changedProperties, oldProperties) when message properties change including tags. oldProperties parameter added in TB 137+. Requires messagesRead + accountsRead permissions. Can detect user corrections to auto-applied tags.",
+      "context": "background.js, user feedback loop",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "header-keys-lowercase",
+      "bad_pattern": "Accessing headers with original case: headers['List-Unsubscribe']",
+      "good_pattern": "Use lowercase keys: headers['list-unsubscribe']?.[0]",
+      "regex": "headers\\[[\"'][A-Z]",
+      "description": "Thunderbird's HeadersDictionary returns header names in lowercase. Values are string arrays (headers can appear multiple times). Always use lowercase keys and optional chaining with array index.",
+      "context": "messenger.messages.getHeaders(), messenger.messages.getFull().headers",
+      "discovered": "2026-04-02",
+      "severity": "HIGH"
+    },
+    {
+      "id": "fireworks-requires-json-in-prompt",
+      "bad_pattern": "Relying solely on response_format: {type: 'json_object'} for JSON output with Fireworks",
+      "good_pattern": "Always include explicit JSON format instructions in the system prompt when using Fireworks (and other OpenAI-compatible providers)",
+      "regex": null,
+      "description": "Fireworks requires the system or user prompt to explicitly instruct the model to produce JSON, even when response_format is set to json_object. Without this, the model may return an endless stream of whitespace until hitting the token limit. OpenAI tolerates missing prompt instructions but Fireworks does not. Always include something like 'Respond with ONLY a JSON object' in the prompt.",
+      "context": "extension/providers/openai.js, extension/common.js — SYSTEM_PROMPT and BATCH_SYSTEM_PROMPT",
+      "discovered": "2026-04-03",
+      "severity": "HIGH"
+    }
+  ]
+}

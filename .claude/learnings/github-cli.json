@@ -1,0 +1,22 @@
+{
+  "domain": "github-cli",
+  "description": "GitHub CLI (gh) gotchas and quirks",
+  "file_patterns": [
+    "*.sh",
+    "*.yml",
+    "*.yaml",
+    "Makefile"
+  ],
+  "entries": [
+    {
+      "id": "gh-repo-create-owner-mismatch",
+      "bad_pattern": "Running gh repo create Owner/repo when authenticated as a different user",
+      "good_pattern": "Verify gh auth status first — the authenticated user must match the repo owner (or have org permissions)",
+      "regex": null,
+      "description": "gh repo create fails with 'X cannot create a repository for Y' if the authenticated GitHub account doesn't match the specified owner. Always run gh auth status to confirm the active account before creating repos. The git user.name config is unrelated to the GitHub API auth.",
+      "context": "release scripts, CI/CD, repo setup",
+      "discovered": "2026-04-02",
+      "severity": "MEDIUM"
+    }
+  ]
+}
