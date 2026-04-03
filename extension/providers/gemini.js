@@ -57,6 +57,10 @@ async function generate(apiKey, model, systemPrompt, userContent, schema) {
   return text;
 }
 
+export async function complete(config, systemPrompt, userContent) {
+  return generate(config.apiKey, config.model, systemPrompt, userContent, TAG_SCHEMA);
+}
+
 export async function classify(config, subject, sender, body, tags) {
   const prompt = SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
   const text = await generate(

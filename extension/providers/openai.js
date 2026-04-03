@@ -35,6 +35,10 @@ async function chatCompletion(config, systemPrompt, userContent) {
   return text;
 }
 
+export async function complete(config, systemPrompt, userContent) {
+  return chatCompletion(config, systemPrompt, userContent);
+}
+
 export async function classify(config, subject, sender, body, tags) {
   const prompt = SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
   const text = await chatCompletion(config, prompt, formatEmail(subject, sender, body));

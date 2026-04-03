@@ -1,4 +1,5 @@
 import { DEFAULT_TAGS, BUILTIN_PROVIDERS, PRESETS } from "../common.js";
+import { buildSample, buildAnalysisPrompt, parseTagSuggestions, buildRefinementPrompt } from "../analyzer.js";
 
 let currentTags = [];
 let currentMode = "home";
@@ -337,6 +338,172 @@ document.getElementById("resetTags").addEventListener("click", () => {
 
 document.getElementById("reviewConsent").addEventListener("click", () => {
   messenger.tabs.create({ url: "../consent/consent.html" });
+});
+
+// --- Analyze Inbox ---
+
+let cachedSamples = [];
+let suggestedTags = [];
+
+function showAnalyzeStatus(message, ok) {
+  const el = document.getElementById("analyzeStatus");
+  el.textContent = message;
+  el.className = ok ? "status ok" : "status err";
+}
+
+function renderSuggestions(tags) {
+  suggestedTags = tags.map((t) => ({ name: t, accepted: true }));
+  const container = document.getElementById("suggestedTags");
+  container.innerHTML = "";
+
+  if (tags.length === 0) {
+    container.textContent = "No suggestions found.";
+    return;
+  }
+
+  const label = document.createElement("p");
+  label.className = "hint";
+  label.textContent = "Click a tag to toggle it. Then apply the ones you want.";
+  container.appendChild(label);
+
+  const chips = document.createElement("div");
+  for (const tag of suggestedTags) {
+    const chip = document.createElement("span");
+    chip.className = "suggested-tag";
+    chip.textContent = tag.name;
+    chip.addEventListener("click", () => {
+      tag.accepted = !tag.accepted;
+      chip.classList.toggle("rejected", !tag.accepted);
+    });
+    chips.appendChild(chip);
+  }
+  container.appendChild(chips);
+
+  const actions = document.createElement("div");
+  actions.className = "suggestion-actions";
+
+  const applyBtn = document.createElement("button");
+  applyBtn.textContent = "Apply Selected";
+  applyBtn.addEventListener("click", () => {
+    const accepted = suggestedTags.filter((t) => t.accepted).map((t) => t.name);
+    if (accepted.length === 0) return;
+    switchToCustom();
+    currentTags = accepted;
+    renderTags();
+    saveTags();
+    showAnalyzeStatus("Tags applied!", true);
+  });
+  actions.appendChild(applyBtn);
+
+  const mergeBtn = document.createElement("button");
+  mergeBtn.className = "secondary";
+  mergeBtn.textContent = "Merge with Current";
+  mergeBtn.addEventListener("click", () => {
+    const accepted = suggestedTags.filter((t) => t.accepted).map((t) => t.name);
+    if (accepted.length === 0) return;
+    switchToCustom();
+    currentTags = [...new Set([...currentTags, ...accepted])];
+    renderTags();
+    saveTags();
+    showAnalyzeStatus("Tags merged!", true);
+  });
+  actions.appendChild(mergeBtn);
+
+  container.appendChild(actions);
+}
+
+async function getAnalysisConfig() {
+  if (!activeProvider || !providerConfigs[activeProvider]) {
+    throw new Error("Set up an AI provider first (above), then analyze.");
+  }
+  const info = BUILTIN_PROVIDERS[activeProvider];
+  const config = providerConfigs[activeProvider];
+  const mod = await getProviderModule(info.kind);
+  return {
+    mod,
+    config: { ...config, baseUrl: config.baseUrl || info.baseUrl || "" },
+  };
+}
+
+async function analyzeInbox() {
+  const analyzeSection = document.getElementById("analyzeSection");
+  analyzeSection.classList.remove("hidden");
+  showAnalyzeStatus("Fetching emails from inbox...", true);
+
+  try {
+    // Get all accounts and find inbox folders
+    const accounts = await messenger.accounts.list();
+    const allMessages = [];
+
+    for (const account of accounts) {
+      const folders = await messenger.folders.getSubFolders(account);
+      const inbox = folders.find((f) => f.type === "inbox");
+      if (!inbox) continue;
+
+      let page = await messenger.messages.list(inbox);
+      allMessages.push(...page.messages);
+      while (page.id && allMessages.length < 500) {
+        page = await messenger.messages.continueList(page.id);
+        allMessages.push(...page.messages);
+      }
+    }
+
+    if (allMessages.length === 0) {
+      showAnalyzeStatus("No emails found in your inbox.", false);
+      return;
+    }
+
+    showAnalyzeStatus(`Sampling ${allMessages.length} emails...`, true);
+    cachedSamples = buildSample(allMessages, 75);
+
+    const { mod, config } = await getAnalysisConfig();
+    const prompt = buildAnalysisPrompt(cachedSamples, currentMode, 10);
+
+    showAnalyzeStatus("Asking AI to suggest tags...", true);
+    const response = await mod.complete(config, prompt, "Suggest tags for these emails.");
+    const tags = parseTagSuggestions(response);
+
+    if (tags.length > 0) {
+      renderSuggestions(tags);
+      document.getElementById("chatSection").classList.remove("hidden");
+      showAnalyzeStatus(`Found ${tags.length} suggested tags.`, true);
+    } else {
+      showAnalyzeStatus("AI couldn't suggest tags. Try a different provider.", false);
+    }
+  } catch (err) {
+    showAnalyzeStatus(`Analysis failed: ${err.message}`, false);
+  }
+}
+
+document.getElementById("analyzeInbox").addEventListener("click", analyzeInbox);
+
+document.getElementById("chatSend").addEventListener("click", async () => {
+  const input = document.getElementById("chatInput");
+  const request = input.value.trim();
+  if (!request) return;
+  input.value = "";
+
+  showAnalyzeStatus("Refining tags...", true);
+
+  try {
+    const { mod, config } = await getAnalysisConfig();
+    const prompt = buildRefinementPrompt(currentTags, request, cachedSamples);
+    const response = await mod.complete(config, prompt, request);
+    const tags = parseTagSuggestions(response);
+
+    if (tags.length > 0) {
+      renderSuggestions(tags);
+      showAnalyzeStatus(`Refined to ${tags.length} tags.`, true);
+    } else {
+      showAnalyzeStatus("Refinement produced no tags. Try a different request.", false);
+    }
+  } catch (err) {
+    showAnalyzeStatus(`Refinement failed: ${err.message}`, false);
+  }
+});
+
+document.getElementById("chatInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("chatSend").click();
 });
 
 // Refresh consent status when storage changes (e.g., user accepts consent in another tab)

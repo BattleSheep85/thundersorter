@@ -119,6 +119,31 @@
     #modelFilter {
       margin-bottom: 4px;
     }
+    .suggested-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      margin: 4px;
+      border-radius: 14px;
+      background: #e3f2fd;
+      color: #1565c0;
+      font-size: 0.88em;
+      cursor: pointer;
+      border: 1px solid #bbdefb;
+    }
+    .suggested-tag:hover { background: #bbdefb; }
+    .suggested-tag.rejected {
+      background: #f5f5f5;
+      color: #999;
+      text-decoration: line-through;
+      border-color: #e0e0e0;
+    }
+    .suggestion-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
   </style>
 </head>
 <body>
@@ -174,8 +199,20 @@
     <input type="text" id="newTag" placeholder="Add a tag (e.g., invoices)">
     <button id="addTag">Add</button>
   </div>
-  <div style="margin-top: 12px;">
+  <div style="margin-top: 12px; display: flex; gap: 8px;">
     <button id="resetTags" class="secondary">Reset to Defaults</button>
+    <button id="analyzeInbox" class="secondary">Analyze Inbox</button>
+  </div>
+
+  <div id="analyzeSection" class="hidden">
+    <div id="analyzeStatus" class="status"></div>
+    <div id="suggestedTags"></div>
+    <div id="chatSection" class="hidden">
+      <div class="add-row" style="margin-top: 12px;">
+        <input type="text" id="chatInput" placeholder='e.g., "add a health tag" or "fewer categories"'>
+        <button id="chatSend">Refine</button>
+      </div>
+    </div>
   </div>
 
   <script src="options.js" type="module"></script>

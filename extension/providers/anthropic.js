@@ -37,6 +37,10 @@ async function createMessage(config, systemPrompt, userContent) {
   return text;
 }
 
+export async function complete(config, systemPrompt, userContent) {
+  return createMessage(config, systemPrompt, userContent);
+}
+
 export async function classify(config, subject, sender, body, tags) {
   const prompt =
     SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", ")) +
