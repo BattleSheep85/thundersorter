@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-03
+
+### Added
+- **"Why this tag?" diagnostics**: right-click any message to see why it was tagged (or why it wasn't)
+- **Classification diagnostics in progress window**: shows tier (headers/sender-cache/AI) per email during bulk classify
+- **Tag preset modes**: Home (10 tags), Business (10 tags), Minimal (4 tags), or Custom
+- **Analyze Inbox**: AI-powered tag discovery — samples your inbox and suggests categories
+- **Chatbox refinement**: type natural language to adjust suggested tags ("add a health tag", "fewer categories")
+- **Tag-to-folder routing**: automatically move classified emails to matching folders
+- **Tag priority system**: drag-to-reorder tag priority for multi-tag folder routing
+- **Auto-folder creation**: folders are created automatically on first use (Home: flat, Business: grouped under Sorted/)
+- New permissions: `messagesMove`, `accountsFolders`
+- 72 new tests (149 total): diagnostics, analyzer, folder-router modules
+- `complete()` export on all provider modules for custom prompts
+
+### Changed
+- `DEFAULT_TAGS` now uses the Home preset (10 tags including health)
+- `TAG_COLORS` expanded to 19 colors covering all preset tags
+- Mode selector above tags in settings replaces tag list on switch
+- Adding/removing individual tags auto-switches to Custom mode
+
+## [0.4.0] - 2026-04-02
+
 ### Added
 - Tiered classification pipeline: header scan (Tier 0) → sender cache (Tier 1) → LLM (Tier 2)
 - Header-based pre-classification: List-Unsubscribe, Precedence, noreply detection skip the API entirely

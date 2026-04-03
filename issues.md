@@ -1,6 +1,6 @@
 # Issues
 
-Last updated: 2026-04-02
+Last updated: 2026-04-03
 
 ## Security
 
@@ -45,6 +45,18 @@ Last updated: 2026-04-02
 
 - [x] MEDIUM: No user correction detection — added onUpdated listener that updates sender cache when user changes ts_ tags
 - [ ] LOW: Classification is permanent — no way to reclassify after model upgrade or tag list change (consider context menu "Reclassify" action)
+
+## v0.5.0 Additions
+
+- [x] HIGH: No way to understand why an email was/wasn't tagged — added "Why this tag?" diagnostics popup
+- [x] HIGH: Tags are one-size-fits-all — added Home/Business/Minimal presets with mode selector
+- [x] HIGH: No way to discover appropriate tags — added "Analyze Inbox" with AI-powered tag discovery
+- [x] HIGH: No folder routing — added tag-to-folder routing with auto-folder creation
+- [x] MEDIUM: resolveFolder case mismatch in priority lookup — normalized mapping keys to lowercase
+- [x] MEDIUM: parseTagSuggestions recursive call could stack overflow — removed recursion
+- [x] MEDIUM: drag-reorder splice ordering bug — replaced with filter+insert pattern
+- [x] MEDIUM: No in-flight guard on Analyze Inbox — added analyzeInProgress guard
+- [ ] LOW: pendingDiagnostic single-slot race (if two popups open simultaneously) — unlikely in practice
 
 ## UX
 

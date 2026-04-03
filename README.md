@@ -42,6 +42,34 @@ That's it. The best available model is selected automatically. New mail will be 
 - **New mail is tagged automatically** as it arrives
 - **Tag a whole folder** by clicking the Thundersorter button in the toolbar
 - **Tag specific messages** by right-clicking and choosing *Classify with Thundersorter*
+- **"Why this tag?"** -- right-click any message to see why it was (or wasn't) tagged
+
+## Tag modes
+
+Thundersorter comes with preset tag categories so you don't have to think about it:
+
+- **Home** (default) -- finance, receipts, newsletters, social, promotions, shipping, travel, notifications, personal, health
+- **Business** -- clients, projects, action-required, follow-up, finance, meetings, internal, reports, newsletters, notifications
+- **Minimal** -- important, finance, newsletters, notifications
+- **Custom** -- make your own list, or use *Analyze Inbox* to discover categories from your email
+
+## Analyze Inbox
+
+Let AI suggest tags based on what's actually in your inbox:
+
+1. Open preferences and click **Analyze Inbox**
+2. Review the suggested tags -- click to toggle each one
+3. Click **Apply Selected** or **Merge with Current**
+4. Use the chatbox to refine: *"add a health tag"*, *"fewer categories"*, *"more work-focused"*
+
+## Folder routing
+
+Optionally move emails into folders after classification:
+
+1. In preferences, check **Automatically move tagged emails to folders**
+2. Folders are created automatically from your tags
+3. Drag tags to set priority -- when an email has multiple tags, the highest-priority tag decides the folder
+4. Home mode creates flat folders. Business mode groups them under "Sorted/"
 
 ## Changing settings
 
@@ -50,6 +78,7 @@ Everything is in the add-on preferences (Add-ons > Thundersorter > Preferences):
 - **Switch providers** -- pick a different one from the dropdown, enter your key, save
 - **Pick a specific model** -- click *Advanced options* to browse all available models from your provider
 - **Edit tag categories** -- add or remove tags to match how you organize email
+- **Choose a mode** -- Home, Business, Minimal, or Custom
 
 ## Updates
 
