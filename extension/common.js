@@ -17,6 +17,7 @@ export const DEFAULT_TAGS = Object.keys(TAG_COLORS);
 
 export const BATCH_SIZE = 10;
 export const RETRY_INTERVAL_MS = 60_000;
+export const SKIP_FOLDER_TYPES = ["sent", "drafts", "trash", "junk", "templates", "outbox"];
 
 export const BUILTIN_PROVIDERS = {
   gemini: {
@@ -95,6 +96,46 @@ Rules:
 
 export function formatEmail(subject, sender, body) {
   return `Subject: ${subject}\nFrom: ${sender}\n\n${body.slice(0, 4000)}`;
+}
+
+// --- Sender normalization ---
+
+export function normalizeSender(sender) {
+  const match = sender.match(/<([^>]+)>/);
+  return (match ? match[1] : sender).toLowerCase().trim();
+}
+
+// --- Header-based pre-classification ---
+
+export function classifyFromHeaders(headers) {
+  const tags = [];
+
+  const listUnsub = headers["list-unsubscribe"]?.[0];
+  const listId = headers["list-id"]?.[0];
+  const precedence = (headers["precedence"]?.[0] || "").toLowerCase();
+
+  if (precedence === "bulk" || precedence === "junk") {
+    tags.push("promotions");
+  } else if (listUnsub || listId || precedence === "list") {
+    tags.push("newsletters");
+  }
+
+  const autoSuppress = headers["x-auto-response-suppress"]?.[0];
+  if (autoSuppress) {
+    tags.push("notifications");
+  }
+
+  const returnPath = (headers["return-path"]?.[0] || "").toLowerCase();
+  const from = (headers["from"]?.[0] || "").toLowerCase();
+
+  if (/no-?reply|donotreply|mailer-daemon/i.test(returnPath) ||
+      /no-?reply|donotreply/i.test(from)) {
+    if (!tags.includes("newsletters") && !tags.includes("promotions")) {
+      tags.push("notifications");
+    }
+  }
+
+  return [...new Set(tags)];
 }
 
 export function filterTags(tags, allowed) {

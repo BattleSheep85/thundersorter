@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Tiered classification pipeline: header scan (Tier 0) → sender cache (Tier 1) → LLM (Tier 2)
+- Header-based pre-classification: List-Unsubscribe, Precedence, noreply detection skip the API entirely
+- Sender reputation cache: remembers tags for known senders (2+ match threshold, LRU eviction at 500 entries)
+- User correction feedback: messenger.messages.onUpdated listener updates sender cache when user changes tags
+- Batch result count validation: warns on mismatch between input and output count
+- normalizeSender() and classifyFromHeaders() exported as testable pure functions
+- 18 new unit tests for header classification, sender normalization
+
 ## [0.3.0] - 2026-04-02
 
 ### Added

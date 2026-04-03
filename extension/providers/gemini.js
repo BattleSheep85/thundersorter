@@ -58,7 +58,7 @@ async function generate(apiKey, model, systemPrompt, userContent, schema) {
 }
 
 export async function classify(config, subject, sender, body, tags) {
-  const prompt = SYSTEM_PROMPT.replace("{tags}", tags.join(", "));
+  const prompt = SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
   const text = await generate(
     config.apiKey,
     config.model,
@@ -71,21 +71,27 @@ export async function classify(config, subject, sender, body, tags) {
 }
 
 export async function classifyBatch(config, emails, tags) {
-  const prompt = BATCH_SYSTEM_PROMPT.replace("{tags}", tags.join(", "));
+  const prompt = BATCH_SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
   const numbered = emails
     .map((e, i) => `Email ${i + 1}:\n${formatEmail(e.subject, e.sender, e.body)}`)
     .join("\n---\n");
 
   const text = await generate(config.apiKey, config.model, prompt, numbered, BATCH_SCHEMA);
   const result = safeParseJSON(text);
-  return (result.results || []).map((r) => filterTags(r.tags || [], tags));
+  const results = (result.results || []).map((r) => filterTags(r.tags || [], tags));
+  if (results.length !== emails.length) {
+    console.warn(`Thundersorter: batch result count mismatch (got ${results.length}, expected ${emails.length})`);
+  }
+  return results;
 }
+
+const MAX_PAGES = 20;
 
 export async function fetchModels(config) {
   const all = [];
   let pageToken = "";
 
-  for (;;) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const params = `pageSize=100${pageToken ? `&pageToken=${pageToken}` : ""}`;
     const url = `https://generativelanguage.googleapis.com/v1beta/models?${params}`;
     const response = await fetch(url, {

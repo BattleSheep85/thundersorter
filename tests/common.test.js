@@ -6,10 +6,13 @@ import {
   formatEmail,
   safeParseJSON,
   apiError,
+  normalizeSender,
+  classifyFromHeaders,
   TAG_PREFIX,
   TAG_COLORS,
   DEFAULT_TAGS,
   BATCH_SIZE,
+  SKIP_FOLDER_TYPES,
   BUILTIN_PROVIDERS,
 } from "../extension/common.js";
 
@@ -119,6 +122,101 @@ describe("apiError", () => {
   });
 });
 
+// --- normalizeSender ---
+
+describe("normalizeSender", () => {
+  it("extracts email from angle bracket format", () => {
+    assert.equal(normalizeSender("John Doe <john@example.com>"), "john@example.com");
+  });
+
+  it("lowercases the result", () => {
+    assert.equal(normalizeSender("Alice <ALICE@EXAMPLE.COM>"), "alice@example.com");
+  });
+
+  it("handles plain email without brackets", () => {
+    assert.equal(normalizeSender("bob@test.com"), "bob@test.com");
+  });
+
+  it("trims whitespace", () => {
+    assert.equal(normalizeSender("  carol@test.com  "), "carol@test.com");
+  });
+
+  it("handles empty string", () => {
+    assert.equal(normalizeSender(""), "");
+  });
+});
+
+// --- classifyFromHeaders ---
+
+describe("classifyFromHeaders", () => {
+  it("returns newsletters for List-Unsubscribe header", () => {
+    const tags = classifyFromHeaders({ "list-unsubscribe": ["<mailto:unsub@test.com>"] });
+    assert.deepEqual(tags, ["newsletters"]);
+  });
+
+  it("returns newsletters for List-Id header", () => {
+    const tags = classifyFromHeaders({ "list-id": ["<weekly.test.com>"] });
+    assert.deepEqual(tags, ["newsletters"]);
+  });
+
+  it("returns newsletters for Precedence: list", () => {
+    const tags = classifyFromHeaders({ "precedence": ["list"] });
+    assert.deepEqual(tags, ["newsletters"]);
+  });
+
+  it("returns promotions for Precedence: bulk", () => {
+    const tags = classifyFromHeaders({ "precedence": ["bulk"] });
+    assert.deepEqual(tags, ["promotions"]);
+  });
+
+  it("returns promotions for Precedence: junk", () => {
+    const tags = classifyFromHeaders({ "precedence": ["junk"] });
+    assert.deepEqual(tags, ["promotions"]);
+  });
+
+  it("returns notifications for X-Auto-Response-Suppress", () => {
+    const tags = classifyFromHeaders({ "x-auto-response-suppress": ["All"] });
+    assert.deepEqual(tags, ["notifications"]);
+  });
+
+  it("returns notifications for noreply sender", () => {
+    const tags = classifyFromHeaders({ "from": ["noreply@example.com"] });
+    assert.deepEqual(tags, ["notifications"]);
+  });
+
+  it("returns notifications for no-reply return path", () => {
+    const tags = classifyFromHeaders({ "return-path": ["<no-reply@example.com>"] });
+    assert.deepEqual(tags, ["notifications"]);
+  });
+
+  it("does not double-tag noreply sender that is also a newsletter", () => {
+    const tags = classifyFromHeaders({
+      "list-unsubscribe": ["<mailto:unsub@test.com>"],
+      "from": ["noreply@test.com"],
+    });
+    assert.deepEqual(tags, ["newsletters"]);
+  });
+
+  it("returns empty array for no matching headers", () => {
+    const tags = classifyFromHeaders({ "subject": ["Hello"], "from": ["alice@test.com"] });
+    assert.deepEqual(tags, []);
+  });
+
+  it("returns empty array for empty headers", () => {
+    assert.deepEqual(classifyFromHeaders({}), []);
+  });
+
+  it("deduplicates tags", () => {
+    const tags = classifyFromHeaders({
+      "precedence": ["bulk"],
+      "x-auto-response-suppress": ["All"],
+    });
+    assert.ok(tags.includes("promotions"));
+    assert.ok(tags.includes("notifications"));
+    assert.equal(new Set(tags).size, tags.length);
+  });
+});
+
 // --- Constants ---
 
 describe("constants", () => {
@@ -165,5 +263,11 @@ describe("constants", () => {
   it("Fireworks has a modelsUrl for native API", () => {
     assert.ok(BUILTIN_PROVIDERS.fireworks.modelsUrl);
     assert.ok(BUILTIN_PROVIDERS.fireworks.modelsUrl.includes("accounts/fireworks/models"));
+  });
+
+  it("SKIP_FOLDER_TYPES includes sent, drafts, trash, junk", () => {
+    for (const type of ["sent", "drafts", "trash", "junk"]) {
+      assert.ok(SKIP_FOLDER_TYPES.includes(type), `missing: ${type}`);
+    }
   });
 });

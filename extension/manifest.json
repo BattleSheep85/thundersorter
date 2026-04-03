@@ -21,7 +21,7 @@
     "https://openrouter.ai/*",
     "https://api.together.xyz/*",
     "https://api.groq.com/*",
-    "http://localhost/*"
+    "http://localhost:11434/*"
   ],
   "background": {
     "scripts": ["background.js"],

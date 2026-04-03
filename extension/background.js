@@ -5,6 +5,9 @@ import {
   BATCH_SIZE,
   RETRY_INTERVAL_MS,
   BUILTIN_PROVIDERS,
+  SKIP_FOLDER_TYPES,
+  normalizeSender,
+  classifyFromHeaders,
 } from "./common.js";
 
 import * as gemini from "./providers/gemini.js";
@@ -87,6 +90,56 @@ async function addToRetryQueue(messageId) {
   await setRetryQueue(updated);
 }
 
+// --- Sender cache ---
+
+const SENDER_CACHE_KEY = "senderCache";
+const SENDER_CACHE_MAX = 500;
+const SENDER_CACHE_HIT_THRESHOLD = 2;
+
+async function getSenderCache() {
+  const { senderCache } = await messenger.storage.local.get({ [SENDER_CACHE_KEY]: {} });
+  return senderCache;
+}
+
+async function lookupSenderCache(sender) {
+  const cache = await getSenderCache();
+  const key = normalizeSender(sender);
+  const entry = cache[key];
+  if (!entry || entry.count < SENDER_CACHE_HIT_THRESHOLD) return null;
+  return entry.tags;
+}
+
+async function updateSenderCache(sender, tags) {
+  if (!tags || tags.length === 0) return;
+  const cache = await getSenderCache();
+  const key = normalizeSender(sender);
+  const existing = cache[key];
+
+  const updated = existing
+    ? { tags: [...new Set([...existing.tags, ...tags])], count: existing.count + 1, lastSeen: Date.now() }
+    : { tags: [...tags], count: 1, lastSeen: Date.now() };
+
+  const newCache = { ...cache, [key]: updated };
+
+  const entries = Object.entries(newCache);
+  if (entries.length > SENDER_CACHE_MAX) {
+    entries.sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+    await messenger.storage.local.set({ [SENDER_CACHE_KEY]: Object.fromEntries(entries.slice(-SENDER_CACHE_MAX)) });
+  } else {
+    await messenger.storage.local.set({ [SENDER_CACHE_KEY]: newCache });
+  }
+}
+
+// --- Header scanning ---
+
+async function getMessageHeaders(messageId) {
+  if (messenger.messages.getHeaders) {
+    return messenger.messages.getHeaders(messageId);
+  }
+  const full = await messenger.messages.getFull(messageId);
+  return full.headers || {};
+}
+
 // --- Deduplication: prevent classifying the same message concurrently ---
 
 const classifyingNow = new Set();
@@ -159,15 +212,43 @@ async function classifyMessage(message) {
 
   if (!(await hasConsent())) return;
 
-  const provider = await getActiveProvider();
-  if (!provider) {
-    console.warn("Thundersorter: no provider configured");
-    return;
-  }
-
   classifyingNow.add(message.id);
   try {
-    const tags = await getCustomTags();
+    const allowedTags = await getCustomTags();
+
+    // Tier 0: Header-based pre-classification (zero API cost)
+    try {
+      const headers = await getMessageHeaders(message.id);
+      const headerTags = classifyFromHeaders(headers).filter((t) => allowedTags.includes(t));
+      if (headerTags.length > 0) {
+        await applyTags(message, headerTags);
+        await updateSenderCache(message.author || "", headerTags);
+        console.log(`Thundersorter: tagged message ${message.id} via headers [${headerTags.join(", ")}]`);
+        return;
+      }
+    } catch (err) {
+      // Header scan failed (e.g., message deleted) — continue to next tier
+      console.debug(`Thundersorter: header scan failed for ${message.id}:`, err.message);
+    }
+
+    // Tier 1: Sender cache lookup (zero API cost)
+    const cachedTags = await lookupSenderCache(message.author || "");
+    if (cachedTags && cachedTags.length > 0) {
+      const validCached = cachedTags.filter((t) => allowedTags.includes(t));
+      if (validCached.length > 0) {
+        await applyTags(message, validCached);
+        console.log(`Thundersorter: tagged message ${message.id} via sender cache [${validCached.join(", ")}]`);
+        return;
+      }
+    }
+
+    // Tier 2+3: LLM classification (API cost)
+    const provider = await getActiveProvider();
+    if (!provider) {
+      console.warn("Thundersorter: no provider configured");
+      return;
+    }
+
     const body = await extractBody(message.id);
 
     const resultTags = await provider.mod.classify(
@@ -175,12 +256,13 @@ async function classifyMessage(message) {
       message.subject || "",
       message.author || "",
       body,
-      tags,
+      allowedTags,
     );
 
     if (!resultTags || resultTags.length === 0) return;
 
     await applyTags(message, resultTags);
+    await updateSenderCache(message.author || "", resultTags);
     console.log(`Thundersorter: tagged message ${message.id} with [${resultTags.join(", ")}]`);
   } catch (err) {
     console.warn(`Thundersorter: classify failed, queuing message ${message.id}:`, err.message);
@@ -339,6 +421,11 @@ async function classifyBatchWithProgress(messages) {
 
     processed += batch.length;
     sendProgress(windowId, processed, total, tagged, "");
+
+    // Brief pause between batches to avoid provider rate limits
+    if (i + BATCH_SIZE < untagged.length) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
   }
 
   sendDone(windowId, total, tagged, false);
@@ -352,6 +439,17 @@ async function classifyFolder(tab) {
   const folder = tab.displayedFolder;
   if (!folder) {
     console.warn("Thundersorter: no folder displayed");
+    return;
+  }
+
+  if (!(await hasConsent())) {
+    await showConsentPage();
+    return;
+  }
+
+  const provider = await getActiveProvider();
+  if (!provider) {
+    await messenger.tabs.create({ url: "options/options.html" });
     return;
   }
 
@@ -396,13 +494,31 @@ messenger.action.onClicked.addListener(async (tab) => {
 
 // --- New mail listener ---
 
-messenger.messages.onNewMailReceived.addListener(async (_folder, messages) => {
+messenger.messages.onNewMailReceived.addListener(async (folder, messages) => {
+  if (folder && SKIP_FOLDER_TYPES.includes(folder.type)) return;
+
   for (const message of messages.messages) {
     try {
       await classifyMessage(message);
     } catch (err) {
       console.error(`Thundersorter: error processing message ${message.id}:`, err.message);
     }
+  }
+});
+
+// --- User correction listener: update sender cache when user changes tags ---
+
+messenger.messages.onUpdated.addListener(async (message, changedProperties) => {
+  if (!changedProperties.tags) return;
+
+  const newTsTags = (changedProperties.tags || [])
+    .filter((t) => t.startsWith(TAG_PREFIX))
+    .map((t) => t.slice(TAG_PREFIX.length));
+
+  // Update sender cache with user's preferred tags
+  if (message.author && newTsTags.length > 0) {
+    await updateSenderCache(message.author, newTsTags);
+    console.log(`Thundersorter: sender cache updated from user correction on ${message.id}`);
   }
 });
 

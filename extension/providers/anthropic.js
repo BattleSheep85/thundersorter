@@ -39,7 +39,7 @@ async function createMessage(config, systemPrompt, userContent) {
 
 export async function classify(config, subject, sender, body, tags) {
   const prompt =
-    SYSTEM_PROMPT.replace("{tags}", tags.join(", ")) +
+    SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", ")) +
     JSON_INSTRUCTION +
     '{"tags": [...]}\n';
 
@@ -50,7 +50,7 @@ export async function classify(config, subject, sender, body, tags) {
 
 export async function classifyBatch(config, emails, tags) {
   const prompt =
-    BATCH_SYSTEM_PROMPT.replace("{tags}", tags.join(", ")) +
+    BATCH_SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", ")) +
     JSON_INSTRUCTION +
     '{"results": [{"tags": [...]}, ...]}\n';
 
@@ -60,14 +60,20 @@ export async function classifyBatch(config, emails, tags) {
 
   const text = await createMessage(config, prompt, numbered);
   const result = safeParseJSON(text);
-  return (result.results || []).map((r) => filterTags(r.tags || [], tags));
+  const results = (result.results || []).map((r) => filterTags(r.tags || [], tags));
+  if (results.length !== emails.length) {
+    console.warn(`Thundersorter: batch result count mismatch (got ${results.length}, expected ${emails.length})`);
+  }
+  return results;
 }
+
+const MAX_PAGES = 20;
 
 export async function fetchModels(config) {
   const all = [];
   let after = "";
 
-  for (;;) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const params = after
       ? `limit=100&after_id=${encodeURIComponent(after)}`
       : "limit=100";
