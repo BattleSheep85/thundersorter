@@ -10,6 +10,8 @@ import {
   classifyFromHeaders,
 } from "./common.js";
 
+import { explain } from "./diagnostics.js";
+
 import * as gemini from "./providers/gemini.js";
 import * as openai from "./providers/openai.js";
 import * as anthropic from "./providers/anthropic.js";
@@ -17,6 +19,23 @@ import * as anthropic from "./providers/anthropic.js";
 const providers = { gemini, openai, anthropic };
 
 let cancelRequested = false;
+
+// --- Diagnostic state (last classification result per message, for "Why this tag?" popup) ---
+// Stores the most recent diagnostic info keyed by message ID. Capped to prevent memory growth.
+const DIAG_CACHE_MAX = 100;
+const diagCache = new Map();
+
+function storeDiagnostic(messageId, info) {
+  diagCache.set(messageId, info);
+  if (diagCache.size > DIAG_CACHE_MAX) {
+    // Delete the oldest entry
+    const oldest = diagCache.keys().next().value;
+    diagCache.delete(oldest);
+  }
+}
+
+// Pending diagnostic request from the popup
+let pendingDiagnostic = null;
 
 // --- Consent gate ---
 
@@ -213,14 +232,19 @@ async function classifyMessage(message) {
   if (!(await hasConsent())) return;
 
   classifyingNow.add(message.id);
+  const diagInfo = { allowedTags: [], existingTags: [] };
+
   try {
     const allowedTags = await getCustomTags();
+    diagInfo.allowedTags = allowedTags;
 
     // Tier 0: Header-based pre-classification (zero API cost)
     try {
       const headers = await getMessageHeaders(message.id);
       const headerTags = classifyFromHeaders(headers).filter((t) => allowedTags.includes(t));
       if (headerTags.length > 0) {
+        diagInfo.headerTags = headerTags;
+        storeDiagnostic(message.id, diagInfo);
         await applyTags(message, headerTags);
         await updateSenderCache(message.author || "", headerTags);
         console.log(`Thundersorter: tagged message ${message.id} via headers [${headerTags.join(", ")}]`);
@@ -236,6 +260,8 @@ async function classifyMessage(message) {
     if (cachedTags && cachedTags.length > 0) {
       const validCached = cachedTags.filter((t) => allowedTags.includes(t));
       if (validCached.length > 0) {
+        diagInfo.senderCacheTags = validCached;
+        storeDiagnostic(message.id, diagInfo);
         await applyTags(message, validCached);
         console.log(`Thundersorter: tagged message ${message.id} via sender cache [${validCached.join(", ")}]`);
         return;
@@ -246,6 +272,7 @@ async function classifyMessage(message) {
     const provider = await getActiveProvider();
     if (!provider) {
       console.warn("Thundersorter: no provider configured");
+      storeDiagnostic(message.id, diagInfo);
       return;
     }
 
@@ -259,12 +286,17 @@ async function classifyMessage(message) {
       allowedTags,
     );
 
+    diagInfo.llmTags = resultTags || [];
+    storeDiagnostic(message.id, diagInfo);
+
     if (!resultTags || resultTags.length === 0) return;
 
     await applyTags(message, resultTags);
     await updateSenderCache(message.author || "", resultTags);
     console.log(`Thundersorter: tagged message ${message.id} with [${resultTags.join(", ")}]`);
   } catch (err) {
+    diagInfo.providerError = err.message;
+    storeDiagnostic(message.id, diagInfo);
     console.warn(`Thundersorter: classify failed, queuing message ${message.id}:`, err.message);
     await addToRetryQueue(message.id);
   } finally {
@@ -320,13 +352,14 @@ async function openProgressWindow() {
   return win.id;
 }
 
-function sendProgress(windowId, processed, total, tagged, currentSubject) {
+function sendProgress(windowId, processed, total, tagged, currentSubject, tier) {
   messenger.runtime.sendMessage({
     type: "classify-progress",
     processed,
     total,
     tagged,
     currentSubject,
+    tier: tier || "",
   }).catch(() => {});
 }
 
@@ -344,6 +377,13 @@ function sendDone(windowId, total, tagged, cancelled) {
 messenger.runtime.onMessage.addListener((msg) => {
   if (msg.type === "cancel-classify") {
     cancelRequested = true;
+  }
+  if (msg.type === "request-diagnostic" && pendingDiagnostic) {
+    messenger.runtime.sendMessage({
+      type: "diagnostic-result",
+      ...pendingDiagnostic,
+    }).catch(() => {});
+    pendingDiagnostic = null;
   }
 });
 
@@ -389,13 +429,20 @@ async function classifyBatchWithProgress(messages) {
 
     sendProgress(windowId, processed, total, tagged, msg.subject || "");
 
+    const diagInfo = { allowedTags };
+    let tier = "";
+
     try {
       // Tier 0: Header-based pre-classification
       let resultTags = null;
       try {
         const headers = await getMessageHeaders(msg.id);
         const headerTags = classifyFromHeaders(headers).filter((t) => allowedTags.includes(t));
-        if (headerTags.length > 0) resultTags = headerTags;
+        if (headerTags.length > 0) {
+          resultTags = headerTags;
+          tier = "headers";
+          diagInfo.headerTags = headerTags;
+        }
       } catch (_) { /* header scan failed, continue */ }
 
       // Tier 1: Sender cache
@@ -403,7 +450,11 @@ async function classifyBatchWithProgress(messages) {
         const cached = await lookupSenderCache(msg.author || "");
         if (cached && cached.length > 0) {
           const valid = cached.filter((t) => allowedTags.includes(t));
-          if (valid.length > 0) resultTags = valid;
+          if (valid.length > 0) {
+            resultTags = valid;
+            tier = "sender-cache";
+            diagInfo.senderCacheTags = valid;
+          }
         }
       }
 
@@ -417,8 +468,12 @@ async function classifyBatchWithProgress(messages) {
           body,
           allowedTags,
         );
+        tier = "llm";
+        diagInfo.llmTags = llmTags || [];
         if (llmTags && llmTags.length > 0) resultTags = llmTags;
       }
+
+      storeDiagnostic(msg.id, diagInfo);
 
       if (resultTags && resultTags.length > 0) {
         await applyTags(msg, resultTags);
@@ -426,12 +481,14 @@ async function classifyBatchWithProgress(messages) {
         tagged++;
       }
     } catch (err) {
+      diagInfo.providerError = err.message;
+      storeDiagnostic(msg.id, diagInfo);
       console.warn(`Thundersorter: classify failed for ${msg.id}:`, err.message);
       await addToRetryQueue(msg.id);
     }
 
     processed++;
-    sendProgress(windowId, processed, total, tagged, "");
+    sendProgress(windowId, processed, total, tagged, "", tier);
   }
 
   sendDone(windowId, total, tagged, false);
@@ -478,19 +535,59 @@ messenger.menus.create({
   contexts: ["message_list"],
 });
 
-messenger.menus.onClicked.addListener(async (info) => {
-  if (info.menuItemId !== "thundersorter-classify") return;
-  if (!info.selectedMessages || info.selectedMessages.messages.length === 0) return;
+messenger.menus.create({
+  id: "thundersorter-why",
+  title: "Why this tag?",
+  contexts: ["message_list"],
+});
 
-  let page = info.selectedMessages;
-  const allMessages = [...page.messages];
-  while (page.id) {
-    page = await messenger.messages.continueList(page.id);
-    allMessages.push(...page.messages);
+messenger.menus.onClicked.addListener(async (info) => {
+  if (info.menuItemId === "thundersorter-classify") {
+    if (!info.selectedMessages || info.selectedMessages.messages.length === 0) return;
+
+    let page = info.selectedMessages;
+    const allMessages = [...page.messages];
+    while (page.id) {
+      page = await messenger.messages.continueList(page.id);
+      allMessages.push(...page.messages);
+    }
+
+    await classifyBatchWithProgress(allMessages);
+    return;
   }
 
-  await classifyBatchWithProgress(allMessages);
+  if (info.menuItemId === "thundersorter-why") {
+    if (!info.selectedMessages || info.selectedMessages.messages.length === 0) return;
+
+    const message = info.selectedMessages.messages[0];
+    await openDiagnosticPopup(message);
+  }
 });
+
+// --- Diagnostic popup ---
+
+async function openDiagnosticPopup(message) {
+  // Look up cached diagnostic, or build one from current state
+  let diagInfo = diagCache.get(message.id);
+  if (!diagInfo) {
+    const allowedTags = await getCustomTags();
+    const existingTsTags = (message.tags || [])
+      .filter((t) => t.startsWith(TAG_PREFIX))
+      .map((t) => t.slice(TAG_PREFIX.length));
+
+    diagInfo = { allowedTags, existingTags: existingTsTags };
+  }
+
+  const diagnostic = explain(diagInfo);
+  pendingDiagnostic = { subject: message.subject || "(no subject)", diagnostic };
+
+  await messenger.windows.create({
+    url: "diagnostics/diagnostics.html",
+    type: "popup",
+    width: 420,
+    height: 300,
+  });
+}
 
 // --- Toolbar action (classify current folder) ---
 

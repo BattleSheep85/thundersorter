@@ -20,6 +20,13 @@ messenger.runtime.onMessage.addListener((msg) => {
     if (msg.currentSubject) {
       document.getElementById("currentSubject").textContent = msg.currentSubject;
     }
+    const tierLabels = {
+      "headers": "Detected from headers",
+      "sender-cache": "Recognized sender",
+      "llm": "AI classified",
+    };
+    document.getElementById("tierInfo").textContent =
+      msg.tier ? tierLabels[msg.tier] || "" : "";
   }
 
   if (msg.type === "classify-done") {

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Thundersorter — Why this tag?</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      width: 360px;
+      margin: 0;
+      padding: 20px;
+      color: #1a1a1a;
+    }
+    h2 {
+      font-size: 1.1em;
+      margin: 0 0 12px 0;
+    }
+    .subject {
+      font-size: 0.9em;
+      color: #555;
+      margin-bottom: 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tier-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.8em;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .tier-headers { background: #e3f2fd; color: #1565c0; }
+    .tier-sender-cache { background: #f3e5f5; color: #6a1b9a; }
+    .tier-llm { background: #fff3e0; color: #e65100; }
+    .tier-skipped { background: #f5f5f5; color: #757575; }
+    .tier-error { background: #ffebee; color: #c62828; }
+    .tier-already-tagged { background: #e8f5e9; color: #2e7d32; }
+    .tier-unknown { background: #f5f5f5; color: #757575; }
+    .tags {
+      margin: 8px 0;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      font-size: 0.85em;
+      margin: 2px 4px 2px 0;
+    }
+    .reason {
+      font-size: 0.95em;
+      line-height: 1.4;
+      margin: 12px 0;
+    }
+    .suggestions {
+      margin: 12px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .suggestions li {
+      font-size: 0.88em;
+      color: #555;
+      padding: 4px 0;
+      padding-left: 16px;
+      position: relative;
+    }
+    .suggestions li::before {
+      content: "\2192";
+      position: absolute;
+      left: 0;
+    }
+    .buttons {
+      margin-top: 16px;
+      text-align: right;
+    }
+    button {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 4px;
+      background: #1565c0;
+      color: white;
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+    button:hover { background: #0d47a1; }
+    .loading {
+      color: #888;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h2>Why this tag?</h2>
+  <div class="subject" id="subject"></div>
+  <div id="content"><span class="loading">Analyzing...</span></div>
+  <div class="buttons">
+    <button id="closeBtn">Close</button>
+  </div>
+  <script src="diagnostics.js" type="module"></script>
+</body>
+</html>
