@@ -76,6 +76,8 @@ Rules:
 - An email can have multiple tags (e.g., a shipping receipt is both "shipping" and "receipts").
 - Newsletters and marketing emails should get "newsletters" or "promotions" as appropriate.
 - Automated notifications (password resets, login alerts, CI builds) get "notifications".
+
+Respond with ONLY a JSON object in this exact format: {"tags": ["tag1", "tag2"]}
 `;
 
 export const BATCH_SYSTEM_PROMPT = `\
@@ -92,6 +94,8 @@ Rules:
 - An email can have multiple tags (e.g., a shipping receipt is both "shipping" and "receipts").
 - Newsletters and marketing emails should get "newsletters" or "promotions" as appropriate.
 - Automated notifications (password resets, login alerts, CI builds) get "notifications".
+
+Respond with ONLY a JSON object in this exact format: {"results": [{"tags": ["tag1"]}, {"tags": ["tag2"]}]}
 `;
 
 export function formatEmail(subject, sender, body) {

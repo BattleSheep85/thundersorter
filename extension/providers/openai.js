@@ -18,6 +18,7 @@ async function chatCompletion(config, systemPrompt, userContent) {
         { role: "user", content: userContent },
       ],
       temperature: 0.1,
+      max_tokens: 1024,
       response_format: { type: "json_object" },
     }),
   });
