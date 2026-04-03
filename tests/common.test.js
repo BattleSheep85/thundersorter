@@ -15,6 +15,7 @@ import {
   BATCH_SIZE,
   SKIP_FOLDER_TYPES,
   BUILTIN_PROVIDERS,
+  PRESETS,
 } from "../extension/common.js";
 
 // --- filterTags ---
@@ -296,8 +297,10 @@ describe("constants", () => {
     assert.ok(TAG_PREFIX.length > 0);
   });
 
-  it("DEFAULT_TAGS matches TAG_COLORS keys", () => {
-    assert.deepEqual(DEFAULT_TAGS, Object.keys(TAG_COLORS));
+  it("every DEFAULT_TAG has a color in TAG_COLORS", () => {
+    for (const tag of DEFAULT_TAGS) {
+      assert.ok(TAG_COLORS[tag], `${tag} has no color in TAG_COLORS`);
+    }
   });
 
   it("BATCH_SIZE is a positive integer", () => {
@@ -340,5 +343,59 @@ describe("constants", () => {
     for (const type of ["sent", "drafts", "trash", "junk"]) {
       assert.ok(SKIP_FOLDER_TYPES.includes(type), `missing: ${type}`);
     }
+  });
+});
+
+// --- PRESETS ---
+
+describe("PRESETS", () => {
+  it("has home, business, and minimal presets", () => {
+    assert.ok(PRESETS.home, "missing home preset");
+    assert.ok(PRESETS.business, "missing business preset");
+    assert.ok(PRESETS.minimal, "missing minimal preset");
+  });
+
+  it("each preset has a label and tags array", () => {
+    for (const [key, preset] of Object.entries(PRESETS)) {
+      assert.ok(typeof preset.label === "string", `${key} missing label`);
+      assert.ok(Array.isArray(preset.tags), `${key} tags is not an array`);
+      assert.ok(preset.tags.length > 0, `${key} has empty tags`);
+    }
+  });
+
+  it("home preset has ~10 personal-use tags", () => {
+    const tags = PRESETS.home.tags;
+    assert.ok(tags.length >= 8 && tags.length <= 12, `home has ${tags.length} tags, expected 8-12`);
+    assert.ok(tags.includes("finance"), "home missing finance");
+    assert.ok(tags.includes("newsletters"), "home missing newsletters");
+    assert.ok(tags.includes("personal"), "home missing personal");
+  });
+
+  it("business preset has ~10 work-use tags", () => {
+    const tags = PRESETS.business.tags;
+    assert.ok(tags.length >= 8 && tags.length <= 12, `business has ${tags.length} tags, expected 8-12`);
+    assert.ok(tags.includes("finance"), "business missing finance");
+    assert.ok(tags.includes("newsletters"), "business missing newsletters");
+  });
+
+  it("minimal preset has 4-6 broad tags", () => {
+    const tags = PRESETS.minimal.tags;
+    assert.ok(tags.length >= 3 && tags.length <= 6, `minimal has ${tags.length} tags, expected 3-6`);
+    assert.ok(tags.includes("finance"), "minimal missing finance");
+    assert.ok(tags.includes("newsletters"), "minimal missing newsletters");
+  });
+
+  it("all preset tags are lowercase single/double words", () => {
+    for (const [key, preset] of Object.entries(PRESETS)) {
+      for (const tag of preset.tags) {
+        assert.ok(tag === tag.toLowerCase(), `${key}/${tag} is not lowercase`);
+        const words = tag.split("-");
+        assert.ok(words.length <= 2, `${key}/${tag} has more than 2 words`);
+      }
+    }
+  });
+
+  it("DEFAULT_TAGS equals home preset tags", () => {
+    assert.deepEqual(DEFAULT_TAGS, PRESETS.home.tags);
   });
 });

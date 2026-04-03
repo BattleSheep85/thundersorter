@@ -159,7 +159,16 @@
   </div>
 
   <h2>Tags</h2>
-  <p class="hint">Emails will be classified into these categories.</p>
+
+  <label for="modeSelect">Mode</label>
+  <select id="modeSelect">
+    <option value="home">Home</option>
+    <option value="business">Business</option>
+    <option value="minimal">Minimal</option>
+    <option value="custom">Custom</option>
+  </select>
+  <p class="hint">Choose a preset to replace your tags, or pick Custom to keep your own.</p>
+
   <ul id="tagList" class="tag-list"></ul>
   <div class="add-row">
     <input type="text" id="newTag" placeholder="Add a tag (e.g., invoices)">

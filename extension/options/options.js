@@ -1,6 +1,7 @@
-import { DEFAULT_TAGS, BUILTIN_PROVIDERS } from "../common.js";
+import { DEFAULT_TAGS, BUILTIN_PROVIDERS, PRESETS } from "../common.js";
 
 let currentTags = [];
+let currentMode = "home";
 let providerConfigs = {};
 let activeProvider = "";
 
@@ -29,13 +30,16 @@ async function loadAll() {
     activeProvider: "",
     providerConfigs: {},
     customTags: null,
+    tagMode: "home",
   });
 
   activeProvider = data.activeProvider;
   providerConfigs = data.providerConfigs;
+  currentMode = data.tagMode || "home";
   currentTags = data.customTags || [...DEFAULT_TAGS];
 
   buildProviderDropdown();
+  document.getElementById("modeSelect").value = currentMode;
   renderTags();
   loadConsentStatus();
 
@@ -50,7 +54,7 @@ async function saveAll() {
 }
 
 async function saveTags() {
-  await messenger.storage.local.set({ customTags: currentTags });
+  await messenger.storage.local.set({ customTags: currentTags, tagMode: currentMode });
 }
 
 // --- Provider dropdown ---
@@ -195,7 +199,13 @@ function renderTags() {
   }
 }
 
+function switchToCustom() {
+  currentMode = "custom";
+  document.getElementById("modeSelect").value = "custom";
+}
+
 function removeTag(tag) {
+  switchToCustom();
   currentTags = currentTags.filter((t) => t !== tag);
   renderTags();
   saveTags();
@@ -206,6 +216,7 @@ function addTag() {
   const tag = input.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
   if (!tag) return;
   if (currentTags.includes(tag)) return;
+  switchToCustom();
   currentTags = [...currentTags, tag];
   renderTags();
   saveTags();
@@ -305,8 +316,21 @@ document.getElementById("newTag").addEventListener("keydown", (e) => {
   if (e.key === "Enter") addTag();
 });
 
+document.getElementById("modeSelect").addEventListener("change", () => {
+  const mode = document.getElementById("modeSelect").value;
+  currentMode = mode;
+  if (PRESETS[mode]) {
+    currentTags = [...PRESETS[mode].tags];
+    renderTags();
+    saveTags();
+  }
+  // "custom" keeps current tags unchanged
+  saveTags();
+});
+
 document.getElementById("resetTags").addEventListener("click", () => {
-  currentTags = [...DEFAULT_TAGS];
+  const preset = PRESETS[currentMode];
+  currentTags = preset ? [...preset.tags] : [...DEFAULT_TAGS];
   renderTags();
   saveTags();
 });

@@ -11,9 +11,33 @@ export const TAG_COLORS = {
   shipping: "#4E342E",
   travel: "#00695C",
   promotions: "#D84315",
+  health: "#00897B",
+  "action-required": "#D32F2F",
+  clients: "#1565C0",
+  projects: "#6A1B9A",
+  "follow-up": "#F9A825",
+  meetings: "#5E35B1",
+  internal: "#546E7A",
+  reports: "#3949AB",
+  important: "#C62828",
 };
 
-export const DEFAULT_TAGS = Object.keys(TAG_COLORS);
+export const PRESETS = {
+  home: {
+    label: "Home",
+    tags: ["finance", "receipts", "newsletters", "social", "promotions", "shipping", "travel", "notifications", "personal", "health"],
+  },
+  business: {
+    label: "Business",
+    tags: ["clients", "projects", "action-required", "follow-up", "finance", "meetings", "internal", "reports", "newsletters", "notifications"],
+  },
+  minimal: {
+    label: "Minimal",
+    tags: ["important", "finance", "newsletters", "notifications"],
+  },
+};
+
+export const DEFAULT_TAGS = PRESETS.home.tags;
 
 export const BATCH_SIZE = 10;
 export const RETRY_INTERVAL_MS = 60_000;
