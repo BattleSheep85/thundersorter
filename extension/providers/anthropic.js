@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, safeParseJSON, apiError } from "../common.js";
+import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, extractTags, safeParseJSON, apiError } from "../common.js";
 
 const JSON_INSTRUCTION = '\nRespond with ONLY a JSON object. No other text.\n';
 
@@ -45,7 +45,12 @@ export async function classify(config, subject, sender, body, tags) {
 
   const text = await createMessage(config, prompt, formatEmail(subject, sender, body));
   const result = safeParseJSON(text);
-  return filterTags(result.tags || [], tags);
+  const raw = extractTags(result);
+  const filtered = filterTags(raw, tags);
+  if (raw.length > 0 && filtered.length === 0) {
+    console.warn("Thundersorter: LLM returned tags but none matched allowed list:", JSON.stringify(raw));
+  }
+  return filtered;
 }
 
 export async function classifyBatch(config, emails, tags) {
@@ -60,7 +65,8 @@ export async function classifyBatch(config, emails, tags) {
 
   const text = await createMessage(config, prompt, numbered);
   const result = safeParseJSON(text);
-  const results = (result.results || []).map((r) => filterTags(r.tags || [], tags));
+  const resultsArr = result.results || result.emails || [];
+  const results = resultsArr.map((r) => filterTags(extractTags(r), tags));
   if (results.length !== emails.length) {
     console.warn(`Thundersorter: batch result count mismatch (got ${results.length}, expected ${emails.length})`);
   }

@@ -142,8 +142,29 @@ export function classifyFromHeaders(headers) {
   return [...new Set(tags)];
 }
 
+/**
+ * Extract tags array from an LLM response object.
+ * Models return tags under various key names — try them all.
+ */
+export function extractTags(result) {
+  if (!result || typeof result !== "object") return [];
+  // Try common key names models use
+  const candidates = result.tags ?? result.tag ?? result.labels ??
+    result.categories ?? result.classification ?? result.category;
+  if (candidates != null) return candidates;
+  // If the result has a single array value, use it
+  const values = Object.values(result);
+  if (values.length === 1 && Array.isArray(values[0])) return values[0];
+  return [];
+}
+
 export function filterTags(tags, allowed) {
-  return tags.filter((t) => allowed.includes(t));
+  // Handle models that return a string instead of an array
+  const arr = Array.isArray(tags) ? tags : typeof tags === "string" ? [tags] : [];
+  const lower = allowed.map((t) => t.toLowerCase());
+  return arr
+    .map((t) => (typeof t === "string" ? t.trim().toLowerCase() : ""))
+    .filter((t) => lower.includes(t));
 }
 
 /**
@@ -165,5 +186,13 @@ export function safeParseJSON(text) {
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
   }
-  return JSON.parse(cleaned);
+  // Try direct parse first
+  try {
+    return JSON.parse(cleaned);
+  } catch (_) {
+    // Model may have included text around the JSON — extract it
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new SyntaxError(`No valid JSON found in response: ${cleaned.slice(0, 100)}`);
+  }
 }

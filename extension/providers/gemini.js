@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, safeParseJSON, apiError } from "../common.js";
+import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, extractTags, safeParseJSON, apiError } from "../common.js";
 
 const TAG_SCHEMA = {
   type: "OBJECT",
@@ -67,7 +67,12 @@ export async function classify(config, subject, sender, body, tags) {
     TAG_SCHEMA,
   );
   const result = safeParseJSON(text);
-  return filterTags(result.tags || [], tags);
+  const raw = extractTags(result);
+  const filtered = filterTags(raw, tags);
+  if (raw.length > 0 && filtered.length === 0) {
+    console.warn("Thundersorter: LLM returned tags but none matched allowed list:", JSON.stringify(raw));
+  }
+  return filtered;
 }
 
 export async function classifyBatch(config, emails, tags) {
@@ -78,7 +83,8 @@ export async function classifyBatch(config, emails, tags) {
 
   const text = await generate(config.apiKey, config.model, prompt, numbered, BATCH_SCHEMA);
   const result = safeParseJSON(text);
-  const results = (result.results || []).map((r) => filterTags(r.tags || [], tags));
+  const resultsArr = result.results || result.emails || [];
+  const results = resultsArr.map((r) => filterTags(extractTags(r), tags));
   if (results.length !== emails.length) {
     console.warn(`Thundersorter: batch result count mismatch (got ${results.length}, expected ${emails.length})`);
   }

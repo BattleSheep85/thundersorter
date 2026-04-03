@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, safeParseJSON, apiError } from "../common.js";
+import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, extractTags, safeParseJSON, apiError } from "../common.js";
 
 async function chatCompletion(config, systemPrompt, userContent) {
   const url = `${config.baseUrl || "https://api.openai.com/v1"}/chat/completions`;
@@ -39,7 +39,15 @@ export async function classify(config, subject, sender, body, tags) {
   const prompt = SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
   const text = await chatCompletion(config, prompt, formatEmail(subject, sender, body));
   const result = safeParseJSON(text);
-  return filterTags(result.tags || [], tags);
+  const raw = extractTags(result);
+  const filtered = filterTags(raw, tags);
+  if (raw.length > 0 && filtered.length === 0) {
+    console.warn("Thundersorter: LLM returned tags but none matched allowed list:", JSON.stringify(raw));
+  }
+  if (raw.length === 0 && Object.keys(result).length > 0) {
+    console.warn("Thundersorter: LLM returned JSON but no tags found:", JSON.stringify(result).slice(0, 200));
+  }
+  return filtered;
 }
 
 export async function classifyBatch(config, emails, tags) {
@@ -50,7 +58,8 @@ export async function classifyBatch(config, emails, tags) {
 
   const text = await chatCompletion(config, prompt, numbered);
   const result = safeParseJSON(text);
-  const results = (result.results || []).map((r) => filterTags(r.tags || [], tags));
+  const resultsArr = result.results || result.emails || [];
+  const results = resultsArr.map((r) => filterTags(extractTags(r), tags));
   if (results.length !== emails.length) {
     console.warn(`Thundersorter: batch result count mismatch (got ${results.length}, expected ${emails.length})`);
   }
@@ -83,7 +92,16 @@ async function fetchNativeModels(modelsUrl, headers) {
     pageToken = data.nextPageToken;
   }
 
-  return all.map((m) => m.name);
+  // Filter to chat-capable models (exclude embedding, vision-only, etc.)
+  return all
+    .map((m) => m.name)
+    .filter((name) => {
+      const n = name.toLowerCase();
+      // Exclude known non-chat model types
+      if (n.includes("embed") || n.includes("whisper") || n.includes("tts")) return false;
+      if (n.includes("diffusion") || n.includes("stable-") || n.includes("sdxl")) return false;
+      return true;
+    });
 }
 
 // Fetch from an OpenAI-compatible /models endpoint.

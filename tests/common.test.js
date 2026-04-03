@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   filterTags,
+  extractTags,
   formatEmail,
   safeParseJSON,
   apiError,
@@ -36,6 +37,62 @@ describe("filterTags", () => {
 
   it("handles empty allowed list", () => {
     assert.deepEqual(filterTags(["finance"], []), []);
+  });
+
+  it("matches case-insensitively", () => {
+    assert.deepEqual(
+      filterTags(["Finance", "TRAVEL"], ["finance", "travel"]),
+      ["finance", "travel"],
+    );
+  });
+
+  it("handles string input instead of array", () => {
+    assert.deepEqual(filterTags("finance", ["finance", "work"]), ["finance"]);
+  });
+
+  it("handles non-array non-string input gracefully", () => {
+    assert.deepEqual(filterTags(123, ["finance"]), []);
+    assert.deepEqual(filterTags(null, ["finance"]), []);
+    assert.deepEqual(filterTags(undefined, ["finance"]), []);
+  });
+});
+
+describe("extractTags", () => {
+  it("extracts from {tags: [...]} format", () => {
+    assert.deepEqual(extractTags({ tags: ["finance"] }), ["finance"]);
+  });
+
+  it("extracts from {tag: [...]} format", () => {
+    assert.deepEqual(extractTags({ tag: ["work"] }), ["work"]);
+  });
+
+  it("extracts from {labels: [...]} format", () => {
+    assert.deepEqual(extractTags({ labels: ["travel"] }), ["travel"]);
+  });
+
+  it("extracts from {categories: [...]} format", () => {
+    assert.deepEqual(extractTags({ categories: ["social"] }), ["social"]);
+  });
+
+  it("extracts from {classification: [...]} format", () => {
+    assert.deepEqual(extractTags({ classification: ["newsletters"] }), ["newsletters"]);
+  });
+
+  it("extracts single array value from unknown key", () => {
+    assert.deepEqual(extractTags({ result: ["finance"] }), ["finance"]);
+  });
+
+  it("returns empty for null/undefined", () => {
+    assert.deepEqual(extractTags(null), []);
+    assert.deepEqual(extractTags(undefined), []);
+  });
+
+  it("returns empty for non-object", () => {
+    assert.deepEqual(extractTags("string"), []);
+  });
+
+  it("returns empty for empty object", () => {
+    assert.deepEqual(extractTags({}), []);
   });
 });
 
@@ -88,7 +145,21 @@ describe("safeParseJSON", () => {
     );
   });
 
-  it("throws on invalid JSON", () => {
+  it("extracts JSON from surrounding text", () => {
+    assert.deepEqual(
+      safeParseJSON('Here is the result: {"tags": ["work"]}'),
+      { tags: ["work"] },
+    );
+  });
+
+  it("extracts JSON when model adds explanation after", () => {
+    assert.deepEqual(
+      safeParseJSON('{"tags": ["finance"]} I classified this email.'),
+      { tags: ["finance"] },
+    );
+  });
+
+  it("throws on no JSON at all", () => {
     assert.throws(() => safeParseJSON("not json at all"), SyntaxError);
   });
 
