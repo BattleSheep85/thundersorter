@@ -11,6 +11,7 @@ import {
 } from "./common.js";
 
 import { explain } from "./diagnostics.js";
+import { resolveFolder } from "./folder-router.js";
 
 import * as gemini from "./providers/gemini.js";
 import * as openai from "./providers/openai.js";
@@ -88,6 +89,75 @@ async function getActiveProvider() {
 async function getCustomTags() {
   const { customTags } = await messenger.storage.local.get({ customTags: null });
   return customTags || DEFAULT_TAGS;
+}
+
+// --- Folder routing ---
+
+async function getFolderRoutingConfig() {
+  const data = await messenger.storage.local.get({
+    folderRoutingEnabled: false,
+    folderMapping: {},
+    tagPriority: [],
+  });
+  return data;
+}
+
+// Cache of created folders: folderName → folderId
+const folderIdCache = new Map();
+
+async function ensureFolderExists(account, folderName) {
+  const cacheKey = `${account.id}:${folderName}`;
+  if (folderIdCache.has(cacheKey)) return folderIdCache.get(cacheKey);
+
+  // Find inbox folder
+  const folders = await messenger.folders.getSubFolders(account);
+  const inbox = folders.find((f) => f.type === "inbox");
+  if (!inbox) return null;
+
+  // Handle nested paths (e.g., "Sorted/Finance")
+  const parts = folderName.split("/");
+  let parent = inbox;
+
+  for (const part of parts) {
+    const subfolders = await messenger.folders.getSubFolders(parent);
+    const existing = subfolders.find((f) => f.name === part);
+    if (existing) {
+      parent = existing;
+    } else {
+      parent = await messenger.folders.create(parent, part);
+    }
+  }
+
+  folderIdCache.set(cacheKey, parent);
+  return parent;
+}
+
+async function routeMessageToFolder(message, tags) {
+  const { folderRoutingEnabled, folderMapping, tagPriority } = await getFolderRoutingConfig();
+  if (!folderRoutingEnabled) return;
+  if (!folderMapping || Object.keys(folderMapping).length === 0) return;
+
+  const folderName = resolveFolder(tags, folderMapping, tagPriority);
+  if (!folderName) return;
+
+  try {
+    // Get the account this message belongs to
+    const folder = await messenger.messages.get(message.id);
+    const msgFolder = folder.folder;
+    if (!msgFolder) return;
+
+    const accounts = await messenger.accounts.list();
+    const account = accounts.find((a) => a.id === msgFolder.accountId);
+    if (!account) return;
+
+    const targetFolder = await ensureFolderExists(account, folderName);
+    if (!targetFolder) return;
+
+    await messenger.messages.move([message.id], targetFolder);
+    console.log(`Thundersorter: moved message ${message.id} to ${folderName}`);
+  } catch (err) {
+    console.warn(`Thundersorter: folder routing failed for ${message.id}:`, err.message);
+  }
 }
 
 const MAX_RETRY_QUEUE = 200;
@@ -247,6 +317,7 @@ async function classifyMessage(message) {
         storeDiagnostic(message.id, diagInfo);
         await applyTags(message, headerTags);
         await updateSenderCache(message.author || "", headerTags);
+        await routeMessageToFolder(message, headerTags);
         console.log(`Thundersorter: tagged message ${message.id} via headers [${headerTags.join(", ")}]`);
         return;
       }
@@ -263,6 +334,7 @@ async function classifyMessage(message) {
         diagInfo.senderCacheTags = validCached;
         storeDiagnostic(message.id, diagInfo);
         await applyTags(message, validCached);
+        await routeMessageToFolder(message, validCached);
         console.log(`Thundersorter: tagged message ${message.id} via sender cache [${validCached.join(", ")}]`);
         return;
       }
@@ -293,6 +365,7 @@ async function classifyMessage(message) {
 
     await applyTags(message, resultTags);
     await updateSenderCache(message.author || "", resultTags);
+    await routeMessageToFolder(message, resultTags);
     console.log(`Thundersorter: tagged message ${message.id} with [${resultTags.join(", ")}]`);
   } catch (err) {
     diagInfo.providerError = err.message;
@@ -478,6 +551,7 @@ async function classifyBatchWithProgress(messages) {
       if (resultTags && resultTags.length > 0) {
         await applyTags(msg, resultTags);
         await updateSenderCache(msg.author || "", resultTags);
+        await routeMessageToFolder(msg, resultTags);
         tagged++;
       }
     } catch (err) {

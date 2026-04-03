@@ -144,6 +144,27 @@
       display: flex;
       gap: 8px;
     }
+    .priority-item {
+      cursor: grab;
+      padding: 6px 10px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      margin: 2px 0;
+      background: white;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .priority-item:active { cursor: grabbing; }
+    .priority-item .drag-handle {
+      color: #bbb;
+      font-size: 1.1em;
+    }
+    .priority-item .folder-name {
+      color: #888;
+      font-size: 0.85em;
+      margin-left: auto;
+    }
   </style>
 </head>
 <body>
@@ -213,6 +234,23 @@
         <button id="chatSend">Refine</button>
       </div>
     </div>
+  </div>
+
+  <h2>Folder Routing</h2>
+
+  <label style="display: flex; align-items: center; gap: 8px; font-weight: normal;">
+    <input type="checkbox" id="folderRoutingEnabled">
+    Automatically move tagged emails to folders
+  </label>
+  <p class="hint">When enabled, emails are moved to matching folders after classification. Folders are created automatically.</p>
+
+  <div id="folderMappingSection" class="hidden">
+    <label>Tag Priority (drag to reorder — highest priority first)</label>
+    <ul id="priorityList" class="tag-list"></ul>
+
+    <p class="hint" style="margin-top: 12px;">
+      Folder names are generated from your tags. In Business mode, folders are grouped under "Sorted/".
+    </p>
   </div>
 
   <script src="options.js" type="module"></script>

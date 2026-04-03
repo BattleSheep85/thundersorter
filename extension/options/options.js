@@ -1,5 +1,6 @@
 import { DEFAULT_TAGS, BUILTIN_PROVIDERS, PRESETS } from "../common.js";
 import { buildSample, buildAnalysisPrompt, parseTagSuggestions, buildRefinementPrompt } from "../analyzer.js";
+import { generateFolderName, buildDefaultMapping } from "../folder-router.js";
 
 let currentTags = [];
 let currentMode = "home";
@@ -32,17 +33,28 @@ async function loadAll() {
     providerConfigs: {},
     customTags: null,
     tagMode: "home",
+    folderRoutingEnabled: false,
+    tagPriority: [],
   });
 
   activeProvider = data.activeProvider;
   providerConfigs = data.providerConfigs;
   currentMode = data.tagMode || "home";
   currentTags = data.customTags || [...DEFAULT_TAGS];
+  folderRoutingEnabled = data.folderRoutingEnabled || false;
+  tagPriority = data.tagPriority || [];
 
   buildProviderDropdown();
   document.getElementById("modeSelect").value = currentMode;
   renderTags();
   loadConsentStatus();
+
+  // Folder routing UI
+  document.getElementById("folderRoutingEnabled").checked = folderRoutingEnabled;
+  if (folderRoutingEnabled) {
+    document.getElementById("folderMappingSection").classList.remove("hidden");
+    renderPriorityList();
+  }
 
   if (activeProvider) {
     document.getElementById("provider").value = activeProvider;
@@ -504,6 +516,85 @@ document.getElementById("chatSend").addEventListener("click", async () => {
 
 document.getElementById("chatInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("chatSend").click();
+});
+
+// --- Folder Routing ---
+
+let folderRoutingEnabled = false;
+let tagPriority = [];
+
+function renderPriorityList() {
+  const list = document.getElementById("priorityList");
+  list.innerHTML = "";
+
+  // Ensure priority list includes all current tags
+  const allTags = [...currentTags];
+  const prioritized = tagPriority.filter((t) => allTags.includes(t));
+  const remaining = allTags.filter((t) => !prioritized.includes(t));
+  tagPriority = [...prioritized, ...remaining];
+
+  for (const tag of tagPriority) {
+    const li = document.createElement("li");
+    li.className = "priority-item";
+    li.draggable = true;
+    li.dataset.tag = tag;
+
+    const handle = document.createElement("span");
+    handle.className = "drag-handle";
+    handle.textContent = "\u2261";
+    li.appendChild(handle);
+
+    const name = document.createElement("span");
+    name.textContent = tag;
+    li.appendChild(name);
+
+    const folder = document.createElement("span");
+    folder.className = "folder-name";
+    folder.textContent = "\u2192 " + generateFolderName(tag, currentMode === "business" ? "business" : "home");
+    li.appendChild(folder);
+
+    // Drag and drop
+    li.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", tag);
+      li.style.opacity = "0.5";
+    });
+    li.addEventListener("dragend", () => { li.style.opacity = "1"; });
+    li.addEventListener("dragover", (e) => { e.preventDefault(); });
+    li.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const from = e.dataTransfer.getData("text/plain");
+      const to = tag;
+      if (from === to) return;
+      const fromIdx = tagPriority.indexOf(from);
+      const toIdx = tagPriority.indexOf(to);
+      tagPriority = [...tagPriority];
+      tagPriority.splice(fromIdx, 1);
+      tagPriority.splice(toIdx, 0, from);
+      renderPriorityList();
+      saveFolderRouting();
+    });
+
+    list.appendChild(li);
+  }
+}
+
+async function saveFolderRouting() {
+  const folderMapping = buildDefaultMapping(
+    currentTags,
+    currentMode === "business" ? "business" : "home",
+  );
+  await messenger.storage.local.set({
+    folderRoutingEnabled,
+    folderMapping,
+    tagPriority,
+  });
+}
+
+document.getElementById("folderRoutingEnabled").addEventListener("change", (e) => {
+  folderRoutingEnabled = e.target.checked;
+  document.getElementById("folderMappingSection").classList.toggle("hidden", !folderRoutingEnabled);
+  if (folderRoutingEnabled) renderPriorityList();
+  saveFolderRouting();
 });
 
 // Refresh consent status when storage changes (e.g., user accepts consent in another tab)
