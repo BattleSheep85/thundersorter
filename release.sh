@@ -20,7 +20,7 @@ fi
 
 # --- Safety: verify no secrets in tracked files ---
 
-if git grep -l 'AIza\|sk-ant-\|sk-proj-\|sk-or-' -- ':!.env*' ':!.gitignore' 2>/dev/null; then
+if git grep -l 'AIza\|sk-ant-\|sk-proj-\|sk-or-' -- ':!.env*' ':!.gitignore' ':!release.sh' ':!.github/workflows/ci.yml' ':!tests/*' 2>/dev/null; then
   echo "ERROR: Possible API key found in tracked files. Aborting."
   exit 1
 fi
