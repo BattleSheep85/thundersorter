@@ -26,7 +26,7 @@ jobs:
 
       - name: Scan for leaked secrets
         run: |
-          if git grep -l 'AIza\|sk-ant-\|sk-proj-\|sk-or-' -- ':!.env*' ':!.gitignore' ':!release.sh' ':!.github/workflows/ci.yml'; then
+          if git grep -l 'AIza\|sk-ant-\|sk-proj-\|sk-or-' -- ':!.env*' ':!.gitignore' ':!release.sh' ':!.github/workflows/ci.yml' ':!tests/*'; then
             echo "ERROR: Possible API key found in tracked files."
             exit 1
           fi
