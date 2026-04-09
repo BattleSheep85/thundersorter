@@ -53,12 +53,13 @@ function renderDiagnostic(data) {
   }
 }
 
-messenger.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "diagnostic-result") {
-    document.getElementById("subject").textContent = msg.subject || "";
-    renderDiagnostic(msg.diagnostic);
+// Request diagnostic data from background using nonce for multi-popup safety
+(async () => {
+  const nonce = new URL(window.location.href).searchParams.get("nonce");
+  if (!nonce) return;
+  const data = await messenger.runtime.sendMessage({ type: "request-diagnostic", nonce });
+  if (data?.diagnostic) {
+    document.getElementById("subject").textContent = data.subject || "";
+    renderDiagnostic(data.diagnostic);
   }
-});
-
-// Request diagnostic data from background
-messenger.runtime.sendMessage({ type: "request-diagnostic" });
+})();

@@ -81,20 +81,26 @@ export function explain(info) {
     };
   }
 
-  // 6. LLM returned tags but none matched allowed list
+  // 6. LLM returned tags — check if any matched allowed list
   if (llmResult && llmResult.length > 0) {
     const lowerAllowed = allowedTags.map((a) => a.toLowerCase());
     const matched = llmResult.filter((t) => lowerAllowed.includes(t.toLowerCase()));
-    if (matched.length === 0) {
+    if (matched.length > 0) {
       return {
         tier: "llm",
-        tags: [],
-        reason: `The AI suggested "${llmResult.join(", ")}" but none of those are in your tag list.`,
-        suggestions: [
-          `Add "${llmResult[0]}" to your tags in Settings, or use "Analyze Inbox" to discover better tags.`,
-        ],
+        tags: matched,
+        reason: `The AI classified this email as: ${matched.join(", ")}.`,
+        suggestions: [],
       };
     }
+    return {
+      tier: "llm",
+      tags: [],
+      reason: `The AI suggested "${llmResult.join(", ")}" but none of those are in your tag list.`,
+      suggestions: [
+        `Add "${llmResult[0]}" to your tags in Settings, or use "Analyze Inbox" to discover better tags.`,
+      ],
+    };
   }
 
   // 7. LLM returned empty

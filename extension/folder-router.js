@@ -68,9 +68,7 @@ export function generateFolderName(tag, mode = "home") {
  * @returns {object} — { tagName: folderPath }
  */
 export function buildDefaultMapping(tags, mode = "home") {
-  const mapping = {};
-  for (const tag of tags) {
-    mapping[tag] = generateFolderName(tag, mode);
-  }
-  return mapping;
+  return Object.fromEntries(
+    tags.map((tag) => [tag, generateFolderName(tag, mode)])
+  );
 }

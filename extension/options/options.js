@@ -6,6 +6,8 @@ let currentTags = [];
 let currentMode = "home";
 let providerConfigs = {};
 let activeProvider = "";
+let folderRoutingEnabled = false;
+let tagPriority = [];
 
 // --- Consent status ---
 
@@ -196,7 +198,7 @@ async function fetchAndSelectModel(name) {
 
 function renderTags() {
   const list = document.getElementById("tagList");
-  list.innerHTML = "";
+  list.replaceChildren();
   for (const tag of currentTags) {
     const li = document.createElement("li");
     const span = document.createElement("span");
@@ -370,7 +372,7 @@ function showAnalyzeStatus(message, ok) {
 function renderSuggestions(tags) {
   suggestedTags = tags.map((t) => ({ name: t, accepted: true }));
   const container = document.getElementById("suggestedTags");
-  container.innerHTML = "";
+  container.replaceChildren();
 
   if (tags.length === 0) {
     container.textContent = "No suggestions found.";
@@ -386,10 +388,16 @@ function renderSuggestions(tags) {
   for (const tag of suggestedTags) {
     const chip = document.createElement("span");
     chip.className = "suggested-tag";
+    chip.setAttribute("role", "button");
+    chip.setAttribute("tabindex", "0");
     chip.textContent = tag.name;
-    chip.addEventListener("click", () => {
+    const toggleChip = () => {
       tag.accepted = !tag.accepted;
       chip.classList.toggle("rejected", !tag.accepted);
+    };
+    chip.addEventListener("click", toggleChip);
+    chip.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleChip(); }
     });
     chips.appendChild(chip);
   }
@@ -444,6 +452,7 @@ async function getAnalysisConfig() {
 async function analyzeInbox() {
   if (analyzeInProgress) return;
   analyzeInProgress = true;
+  cachedSamples = [];
   const analyzeBtn = document.getElementById("analyzeInbox");
   analyzeBtn.disabled = true;
 
@@ -532,27 +541,28 @@ document.getElementById("chatInput").addEventListener("keydown", (e) => {
 
 // --- Folder Routing ---
 
-let folderRoutingEnabled = false;
-let tagPriority = [];
-
-function renderPriorityList() {
-  const list = document.getElementById("priorityList");
-  list.innerHTML = "";
-
-  // Ensure priority list includes all current tags
+function syncTagPriority() {
   const allTags = [...currentTags];
   const prioritized = tagPriority.filter((t) => allTags.includes(t));
   const remaining = allTags.filter((t) => !prioritized.includes(t));
   tagPriority = [...prioritized, ...remaining];
+}
+
+function renderPriorityList() {
+  syncTagPriority();
+  const list = document.getElementById("priorityList");
+  list.replaceChildren();
 
   for (const tag of tagPriority) {
     const li = document.createElement("li");
     li.className = "priority-item";
     li.draggable = true;
+    li.setAttribute("tabindex", "0");
     li.dataset.tag = tag;
 
     const handle = document.createElement("span");
     handle.className = "drag-handle";
+    handle.setAttribute("aria-hidden", "true");
     handle.textContent = "\u2261";
     li.appendChild(handle);
 
@@ -565,6 +575,24 @@ function renderPriorityList() {
     folder.textContent = "\u2192 " + generateFolderName(tag, currentMode === "business" ? "business" : "home");
     li.appendChild(folder);
 
+    // Keyboard reorder (Alt+Up / Alt+Down)
+    li.addEventListener("keydown", (e) => {
+      if (!e.altKey) return;
+      const idx = tagPriority.indexOf(tag);
+      if (e.key === "ArrowUp" && idx > 0) {
+        e.preventDefault();
+        tagPriority = [...tagPriority.slice(0, idx - 1), tag, tagPriority[idx - 1], ...tagPriority.slice(idx + 1)];
+        renderPriorityList();
+        saveFolderRouting();
+        list.children[idx - 1]?.focus();
+      } else if (e.key === "ArrowDown" && idx < tagPriority.length - 1) {
+        e.preventDefault();
+        tagPriority = [...tagPriority.slice(0, idx), tagPriority[idx + 1], tag, ...tagPriority.slice(idx + 2)];
+        renderPriorityList();
+        saveFolderRouting();
+        list.children[idx + 1]?.focus();
+      }
+    });
     // Drag and drop
     li.addEventListener("dragstart", (e) => {
       e.dataTransfer.setData("text/plain", tag);

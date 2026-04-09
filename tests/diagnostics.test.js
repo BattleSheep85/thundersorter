@@ -74,6 +74,19 @@ describe("explain", () => {
     assert.ok(result.suggestions.length > 0);
   });
 
+  it("returns llm tier with matched tags when llmResult has allowed matches but llmTags is empty", () => {
+    const result = explain({
+      headers: {},
+      llmResult: ["finance", "unknown-tag"],
+      llmTags: [],
+      allowedTags: ["finance", "work"],
+    });
+    assert.equal(result.tier, "llm");
+    assert.deepEqual(result.tags, ["finance"]);
+    assert.ok(result.reason.includes("finance"));
+    assert.deepEqual(result.suggestions, []);
+  });
+
   it("suggests adding the first unmatched tag", () => {
     const result = explain({
       headers: {},

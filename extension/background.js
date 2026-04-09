@@ -35,8 +35,8 @@ function storeDiagnostic(messageId, info) {
   }
 }
 
-// Pending diagnostic request from the popup
-let pendingDiagnostic = null;
+// Pending diagnostic requests keyed by nonce (multi-popup safe)
+const pendingDiagnostics = new Map();
 
 // --- Consent gate ---
 
@@ -103,11 +103,36 @@ async function getFolderRoutingConfig() {
 }
 
 // Cache of created folders: folderName → folderId
+const FOLDER_CACHE_MAX = 200;
 const folderIdCache = new Map();
+const folderCreationPending = new Map();
+
+function isValidFolderSegment(segment) {
+  if (!segment || segment === "." || segment === "..") return false;
+  if (/[\x00-\x1f]/.test(segment)) return false;
+  return segment.trim().length > 0;
+}
 
 async function ensureFolderExists(account, folderName) {
   const cacheKey = `${account.id}:${folderName}`;
   if (folderIdCache.has(cacheKey)) return folderIdCache.get(cacheKey);
+  if (folderCreationPending.has(cacheKey)) return folderCreationPending.get(cacheKey);
+
+  const promise = createFolderPath(account, folderName, cacheKey);
+  folderCreationPending.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    folderCreationPending.delete(cacheKey);
+  }
+}
+
+async function createFolderPath(account, folderName, cacheKey) {
+  // Validate all path segments before creating anything
+  const parts = folderName.split("/");
+  for (const part of parts) {
+    if (!isValidFolderSegment(part)) return null;
+  }
 
   // Find inbox folder
   const folders = await messenger.folders.getSubFolders(account);
@@ -115,9 +140,7 @@ async function ensureFolderExists(account, folderName) {
   if (!inbox) return null;
 
   // Handle nested paths (e.g., "Sorted/Finance")
-  const parts = folderName.split("/");
   let parent = inbox;
-
   for (const part of parts) {
     const subfolders = await messenger.folders.getSubFolders(parent);
     const existing = subfolders.find((f) => f.name === part);
@@ -129,6 +152,10 @@ async function ensureFolderExists(account, folderName) {
   }
 
   folderIdCache.set(cacheKey, parent);
+  if (folderIdCache.size > FOLDER_CACHE_MAX) {
+    const oldest = folderIdCache.keys().next().value;
+    folderIdCache.delete(oldest);
+  }
   return parent;
 }
 
@@ -449,13 +476,14 @@ function sendDone(windowId, total, tagged, cancelled) {
 messenger.runtime.onMessage.addListener((msg) => {
   if (msg.type === "cancel-classify") {
     cancelRequested = true;
+    return;
   }
-  if (msg.type === "request-diagnostic" && pendingDiagnostic) {
-    messenger.runtime.sendMessage({
-      type: "diagnostic-result",
-      ...pendingDiagnostic,
-    }).catch(() => {});
-    pendingDiagnostic = null;
+  if (msg.type === "request-diagnostic" && msg.nonce) {
+    const data = pendingDiagnostics.get(msg.nonce);
+    if (data) {
+      pendingDiagnostics.delete(msg.nonce);
+      return Promise.resolve(data);
+    }
   }
 });
 
@@ -652,10 +680,14 @@ async function openDiagnosticPopup(message) {
   }
 
   const diagnostic = explain(diagInfo);
-  pendingDiagnostic = { subject: message.subject || "(no subject)", diagnostic };
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  pendingDiagnostics.set(nonce, {
+    subject: message.subject || "(no subject)",
+    diagnostic,
+  });
 
   await messenger.windows.create({
-    url: "diagnostics/diagnostics.html",
+    url: `diagnostics/diagnostics.html?nonce=${nonce}`,
     type: "popup",
     width: 420,
     height: 300,

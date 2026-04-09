@@ -217,7 +217,7 @@
 
   <ul id="tagList" class="tag-list"></ul>
   <div class="add-row">
-    <input type="text" id="newTag" placeholder="Add a tag (e.g., invoices)">
+    <input type="text" id="newTag" placeholder="Add a tag (e.g., invoices)" maxlength="30">
     <button id="addTag">Add</button>
   </div>
   <div style="margin-top: 12px; display: flex; gap: 8px;">
@@ -230,7 +230,7 @@
     <div id="suggestedTags"></div>
     <div id="chatSection" class="hidden">
       <div class="add-row" style="margin-top: 12px;">
-        <input type="text" id="chatInput" placeholder='e.g., "add a health tag" or "fewer categories"'>
+        <input type="text" id="chatInput" placeholder='e.g., "add a health tag" or "fewer categories"' maxlength="200">
         <button id="chatSend">Refine</button>
       </div>
     </div>

@@ -21,26 +21,23 @@ export function buildSample(messages, targetSize = 75) {
     byDomain.get(domain).push(msg);
   }
 
-  // Sort each domain's messages by date (newest first)
-  for (const group of byDomain.values()) {
-    group.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-  }
-
   // Take from each domain proportionally, with a minimum of 1
   const domains = [...byDomain.entries()];
   const totalMessages = messages.length;
   const sample = [];
 
   for (const [, group] of domains) {
-    const proportion = group.length / totalMessages;
+    // Sort a copy by date (newest first) — never mutate the original
+    const sorted = [...group].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    const proportion = sorted.length / totalMessages;
     const count = Math.max(1, Math.round(proportion * targetSize));
     // Spread picks across the group (temporal spread)
-    const step = Math.max(1, Math.floor(group.length / count));
+    const step = Math.max(1, Math.floor(sorted.length / count));
     let picked = 0;
-    for (let i = 0; i < group.length && picked < count && sample.length < targetSize; i += step) {
+    for (let i = 0; i < sorted.length && picked < count && sample.length < targetSize; i += step) {
       sample.push({
-        subject: group[i].subject || "",
-        sender: group[i].author || "",
+        subject: sorted[i].subject || "",
+        sender: sorted[i].author || "",
       });
       picked++;
     }
