@@ -3,9 +3,9 @@
     "thundersorter@local": {
       "updates": [
         {
-          "version": "0.4.3",
-          "update_link": "https://github.com/BattleSheep85/thundersorter/releases/download/v0.4.3/thundersorter.xpi",
-          "update_hash": "sha256:7fcd4be05aa872811b3e1387c6a441d8315d0bd16731c1e73bed3a881dd29a7d",
+          "version": "0.5.1",
+          "update_link": "https://github.com/BattleSheep85/thundersorter/releases/download/v0.5.1/thundersorter.xpi",
+          "update_hash": "sha256:7dda430bf2550c6fa1852611eef02f826105697bc211165c7f4bd6456dcd7e0c",
           "applications": {
             "gecko": {
               "strict_min_version": "128.0"
