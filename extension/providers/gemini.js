@@ -28,6 +28,12 @@ const BATCH_SCHEMA = {
 async function generate(apiKey, model, systemPrompt, userContent, schema) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
+  const generationConfig = { temperature: 0.1 };
+  if (schema) {
+    generationConfig.response_mime_type = "application/json";
+    generationConfig.response_schema = schema;
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -37,16 +43,12 @@ async function generate(apiKey, model, systemPrompt, userContent, schema) {
     body: JSON.stringify({
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: userContent }] }],
-      generation_config: {
-        temperature: 0.1,
-        response_mime_type: "application/json",
-        response_schema: schema,
-      },
+      generation_config: generationConfig,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(apiError(response.status, await response.text()));
+    throw new Error(`Model "${model}": ${apiError(response.status, await response.text())}`);
   }
 
   const data = await response.json();
@@ -58,7 +60,7 @@ async function generate(apiKey, model, systemPrompt, userContent, schema) {
 }
 
 export async function complete(config, systemPrompt, userContent) {
-  return generate(config.apiKey, config.model, systemPrompt, userContent, TAG_SCHEMA);
+  return generate(config.apiKey, config.model, systemPrompt, userContent, null);
 }
 
 export async function classify(config, subject, sender, body, tags) {

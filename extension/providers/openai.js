@@ -24,7 +24,7 @@ async function chatCompletion(config, systemPrompt, userContent) {
   });
 
   if (!response.ok) {
-    throw new Error(apiError(response.status, await response.text()));
+    throw new Error(`Model "${config.model}": ${apiError(response.status, await response.text())}`);
   }
 
   const data = await response.json();
