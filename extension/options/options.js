@@ -185,8 +185,12 @@ async function fetchAndSelectModel(name) {
     throw new Error("No models found for this provider.");
   }
 
-  // Keep the previously saved model if it's still available, otherwise use the first
-  const selectedModel = saved.model && allModels.includes(saved.model) ? saved.model : allModels[0];
+  // Keep the previously saved model if it's still available, then try provider default, then first
+  const defaultModel = info?.defaultModel;
+  const selectedModel =
+    (saved.model && allModels.includes(saved.model) && saved.model) ||
+    (defaultModel && allModels.includes(defaultModel) && defaultModel) ||
+    allModels[0];
 
   document.getElementById("modelFilter").value = "";
   renderModelList("", selectedModel);

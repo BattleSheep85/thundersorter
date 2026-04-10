@@ -69,6 +69,8 @@ export const BUILTIN_PROVIDERS = {
     label: "OpenRouter",
     kind: "openai",
     baseUrl: "https://openrouter.ai/api/v1",
+    defaultModel: "openrouter/free",
+    keyUrl: "https://openrouter.ai/keys",
   },
   groq: {
     label: "Groq",
