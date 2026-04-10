@@ -466,11 +466,11 @@ async function analyzeInbox() {
     const allMessages = [];
 
     for (const account of accounts) {
-      const folders = await messenger.folders.getSubFolders(account);
-      const inbox = folders.find((f) => f.type === "inbox");
+      const folders = await messenger.folders.getSubFolders(account.rootFolder.id);
+      const inbox = folders.find((f) => f.specialUse?.includes("inbox"));
       if (!inbox) continue;
 
-      let page = await messenger.messages.list(inbox);
+      let page = await messenger.messages.list(inbox.id);
       allMessages.push(...page.messages);
       while (page.id && allMessages.length < 500) {
         page = await messenger.messages.continueList(page.id);

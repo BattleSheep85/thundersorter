@@ -134,20 +134,20 @@ async function createFolderPath(account, folderName, cacheKey) {
     if (!isValidFolderSegment(part)) return null;
   }
 
-  // Find inbox folder
-  const folders = await messenger.folders.getSubFolders(account);
-  const inbox = folders.find((f) => f.type === "inbox");
+  // Find inbox folder (getSubFolders takes a MailFolderId string in MV3)
+  const rootFolders = await messenger.folders.getSubFolders(account.rootFolder.id);
+  const inbox = rootFolders.find((f) => f.specialUse?.includes("inbox"));
   if (!inbox) return null;
 
   // Handle nested paths (e.g., "Sorted/Finance")
   let parent = inbox;
   for (const part of parts) {
-    const subfolders = await messenger.folders.getSubFolders(parent);
+    const subfolders = await messenger.folders.getSubFolders(parent.id);
     const existing = subfolders.find((f) => f.name === part);
     if (existing) {
       parent = existing;
     } else {
-      parent = await messenger.folders.create(parent, part);
+      parent = await messenger.folders.create(parent.id, part);
     }
   }
 
@@ -179,7 +179,7 @@ async function routeMessageToFolder(message, tags) {
     const targetFolder = await ensureFolderExists(account, folderName);
     if (!targetFolder) return;
 
-    await messenger.messages.move([message.id], targetFolder);
+    await messenger.messages.move([message.id], targetFolder.id);
     console.log(`Thundersorter: moved message ${message.id} to ${folderName}`);
   } catch (err) {
     console.warn(`Thundersorter: folder routing failed for ${message.id}:`, err.message);
@@ -618,7 +618,7 @@ async function classifyFolder(tab) {
   }
 
   console.log(`Thundersorter: classifying folder "${folder.path}"`);
-  let page = await messenger.messages.list(folder);
+  let page = await messenger.messages.list(folder.id);
   const allMessages = [...page.messages];
   while (page.id) {
     page = await messenger.messages.continueList(page.id);
@@ -703,7 +703,7 @@ messenger.action.onClicked.addListener(async (tab) => {
 // --- New mail listener ---
 
 messenger.messages.onNewMailReceived.addListener(async (folder, messages) => {
-  if (folder && SKIP_FOLDER_TYPES.includes(folder.type)) return;
+  if (folder && folder.specialUse?.some((u) => SKIP_FOLDER_TYPES.includes(u))) return;
 
   for (const message of messages.messages) {
     try {
