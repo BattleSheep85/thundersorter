@@ -177,25 +177,34 @@
 
   <h2>AI Provider</h2>
 
-  <label for="provider">Provider</label>
-  <select id="provider">
-    <option value="" disabled selected>Choose a provider...</option>
-  </select>
-
-  <div id="apiKeyGroup">
-    <label for="apiKey">API Key</label>
-    <input type="password" id="apiKey" placeholder="Paste your API key">
-    <p class="hint" id="keyHint"></p>
+  <div id="connectedBanner" class="consent-banner ok hidden">
+    <p>Connected to <strong id="connectedProvider"></strong></p>
   </div>
 
-  <div style="margin-top: 12px;">
-    <button id="save">Save</button>
+  <div id="connectSection">
+    <p class="hint">Free AI email sorting powered by OpenRouter. No API key needed.</p>
+    <button id="connectOpenRouter">Connect OpenRouter</button>
   </div>
 
   <div id="status" class="status"></div>
 
-  <span class="advanced-toggle" id="advancedToggle">Advanced options</span>
+  <span class="advanced-toggle" id="advancedToggle">Use a different provider</span>
   <div id="advancedSection" class="hidden">
+    <label for="provider">Provider</label>
+    <select id="provider">
+      <option value="" disabled selected>Choose a provider...</option>
+    </select>
+
+    <div id="apiKeyGroup">
+      <label for="apiKey">API Key</label>
+      <input type="password" id="apiKey" placeholder="Paste your API key">
+      <p class="hint" id="keyHint"></p>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <button id="save">Save</button>
+    </div>
+
     <label for="modelFilter">Model</label>
     <input type="text" id="modelFilter" placeholder="Type to filter models...">
     <select id="modelSelect" size="10">

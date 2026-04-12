@@ -1,6 +1,7 @@
 import { DEFAULT_TAGS, BUILTIN_PROVIDERS, PRESETS } from "../common.js";
 import { buildSample, buildAnalysisPrompt, parseTagSuggestions, buildRefinementPrompt } from "../analyzer.js";
 import { generateFolderName, buildDefaultMapping } from "../folder-router.js";
+import { generatePKCE, watchTab, exchangeCode, CALLBACK_URL } from "../oauth.js";
 
 let currentTags = [];
 let currentMode = "home";
@@ -8,6 +9,62 @@ let providerConfigs = {};
 let activeProvider = "";
 let folderRoutingEnabled = false;
 let tagPriority = [];
+
+// --- PKCE OAuth ---
+
+async function connectOpenRouter() {
+  const btn = document.getElementById("connectOpenRouter");
+  btn.disabled = true;
+  showStatus("Opening OpenRouter login...", true);
+
+  try {
+    const { verifier, challenge } = await generatePKCE();
+    const authUrl = `https://openrouter.ai/auth?callback_url=${encodeURIComponent(CALLBACK_URL)}&code_challenge=${challenge}&code_challenge_method=S256`;
+    const tab = await messenger.tabs.create({ url: authUrl });
+    const code = await watchTab(tab.id);
+
+    showStatus("Exchanging code for API key...", true);
+    const apiKey = await exchangeCode(code, verifier);
+
+    providerConfigs = {
+      ...providerConfigs,
+      openrouter: { apiKey, kind: "openai", baseUrl: "https://openrouter.ai/api/v1", model: "openrouter/free" },
+    };
+    activeProvider = "openrouter";
+    await saveAll();
+
+    updateConnectionStatus();
+    showStatus("Connected! Emails will be sorted using OpenRouter (free).", true);
+
+    const { dataConsentGiven } = await messenger.storage.local.get({ dataConsentGiven: false });
+    if (!dataConsentGiven) {
+      messenger.tabs.create({ url: "../consent/consent.html" });
+    }
+  } catch (err) {
+    showStatus(err.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function updateConnectionStatus() {
+  const banner = document.getElementById("connectedBanner");
+  const connectSection = document.getElementById("connectSection");
+  const providerLabel = document.getElementById("connectedProvider");
+
+  if (activeProvider && providerConfigs[activeProvider]) {
+    const info = BUILTIN_PROVIDERS[activeProvider];
+    const config = providerConfigs[activeProvider];
+    const label = info?.label || activeProvider;
+    const model = config.model || "auto";
+    providerLabel.textContent = `${label} (${model})`;
+    banner.classList.remove("hidden");
+    connectSection.classList.add("hidden");
+  } else {
+    banner.classList.add("hidden");
+    connectSection.classList.remove("hidden");
+  }
+}
 
 // --- Consent status ---
 
@@ -50,6 +107,7 @@ async function loadAll() {
   document.getElementById("modeSelect").value = currentMode;
   renderTags();
   loadConsentStatus();
+  updateConnectionStatus();
 
   // Folder routing UI
   document.getElementById("folderRoutingEnabled").checked = folderRoutingEnabled;
@@ -298,11 +356,13 @@ document.getElementById("save").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("connectOpenRouter").addEventListener("click", connectOpenRouter);
+
 document.getElementById("advancedToggle").addEventListener("click", () => {
   const section = document.getElementById("advancedSection");
   const toggle = document.getElementById("advancedToggle");
   const isHidden = section.classList.toggle("hidden");
-  toggle.textContent = isHidden ? "Advanced options" : "Hide advanced options";
+  toggle.textContent = isHidden ? "Use a different provider" : "Hide provider options";
 });
 
 document.getElementById("modelSelect").addEventListener("change", async () => {
