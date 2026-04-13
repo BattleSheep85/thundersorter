@@ -502,7 +502,7 @@ function renderSuggestions(tags) {
 
 async function getAnalysisConfig() {
   if (!activeProvider || !providerConfigs[activeProvider]) {
-    throw new Error("Set up an AI provider first (above), then analyze.");
+    throw new Error("Click \"Connect OpenRouter\" above first, or set up a provider in Advanced.");
   }
   const info = BUILTIN_PROVIDERS[activeProvider];
   const config = providerConfigs[activeProvider];
@@ -708,6 +708,12 @@ document.getElementById("folderRoutingEnabled").addEventListener("change", (e) =
 messenger.storage.onChanged.addListener((changes) => {
   if (changes.dataConsentGiven) {
     loadConsentStatus();
+  }
+  if (changes.activeProvider || changes.providerConfigs) {
+    if (changes.activeProvider) activeProvider = changes.activeProvider.newValue || "";
+    if (changes.providerConfigs) providerConfigs = changes.providerConfigs.newValue || {};
+    updateConnectionStatus();
+    buildProviderDropdown();
   }
 });
 

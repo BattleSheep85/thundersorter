@@ -20,6 +20,39 @@ import * as anthropic from "./providers/anthropic.js";
 const providers = { gemini, openai, anthropic };
 
 let cancelRequested = false;
+let classifiedCount = 0;
+
+// --- Badge indicator ---
+
+async function updateBadge() {
+  const provider = await getActiveProvider();
+  const consented = await hasConsent();
+
+  if (!provider) {
+    messenger.action.setBadgeText({ text: "!" });
+    messenger.action.setBadgeBackgroundColor({ color: "#e65100" });
+    messenger.action.setTitle({ title: "Thundersorter — click to set up" });
+    return;
+  }
+
+  if (!consented) {
+    messenger.action.setBadgeText({ text: "!" });
+    messenger.action.setBadgeBackgroundColor({ color: "#e65100" });
+    messenger.action.setTitle({ title: "Thundersorter — consent needed" });
+    return;
+  }
+
+  const label = BUILTIN_PROVIDERS[provider.name]?.label || provider.name;
+  if (classifiedCount > 0) {
+    messenger.action.setBadgeText({ text: String(classifiedCount) });
+    messenger.action.setBadgeBackgroundColor({ color: "#2e7d32" });
+    messenger.action.setTitle({ title: `Thundersorter — ${classifiedCount} sorted (${label})` });
+  } else {
+    messenger.action.setBadgeText({ text: "\u2713" });
+    messenger.action.setBadgeBackgroundColor({ color: "#2e7d32" });
+    messenger.action.setTitle({ title: `Thundersorter — active (${label})` });
+  }
+}
 
 // --- Diagnostic state (last classification result per message, for "Why this tag?" popup) ---
 // Stores the most recent diagnostic info keyed by message ID. Capped to prevent memory growth.
@@ -344,6 +377,8 @@ async function classifyMessage(message) {
         await applyTags(message, headerTags);
         await updateSenderCache(message.author || "", headerTags);
         await routeMessageToFolder(message, headerTags);
+        classifiedCount++;
+        updateBadge();
         console.log(`Thundersorter: tagged message ${message.id} via headers [${headerTags.join(", ")}]`);
         return;
       }
@@ -361,6 +396,8 @@ async function classifyMessage(message) {
         storeDiagnostic(message.id, diagInfo);
         await applyTags(message, validCached);
         await routeMessageToFolder(message, validCached);
+        classifiedCount++;
+        updateBadge();
         console.log(`Thundersorter: tagged message ${message.id} via sender cache [${validCached.join(", ")}]`);
         return;
       }
@@ -392,6 +429,8 @@ async function classifyMessage(message) {
     await applyTags(message, resultTags);
     await updateSenderCache(message.author || "", resultTags);
     await routeMessageToFolder(message, resultTags);
+    classifiedCount++;
+    updateBadge();
     console.log(`Thundersorter: tagged message ${message.id} with [${resultTags.join(", ")}]`);
   } catch (err) {
     diagInfo.providerError = err.message;
@@ -580,6 +619,7 @@ async function classifyBatchWithProgress(messages) {
         await updateSenderCache(msg.author || "", resultTags);
         await routeMessageToFolder(msg, resultTags);
         tagged++;
+        classifiedCount++;
       }
     } catch (err) {
       diagInfo.providerError = err.message;
@@ -593,6 +633,7 @@ async function classifyBatchWithProgress(messages) {
   }
 
   sendDone(windowId, total, tagged, false);
+  updateBadge();
   console.log(`Thundersorter: classified ${tagged} of ${total} message(s)`);
   return tagged;
 }
@@ -732,5 +773,15 @@ messenger.messages.onUpdated.addListener(async (message, changedProperties) => {
 
 // Periodic retry queue drain
 setInterval(processRetryQueue, RETRY_INTERVAL_MS);
+
+// Update badge when provider or consent changes
+messenger.storage.onChanged.addListener((changes) => {
+  if (changes.activeProvider || changes.providerConfigs || changes.dataConsentGiven) {
+    updateBadge();
+  }
+});
+
+// Show status on startup
+updateBadge();
 
 console.log("Thundersorter: background script loaded");
