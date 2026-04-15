@@ -1,6 +1,6 @@
 import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, extractTags, safeParseJSON, apiError } from "../common.js";
 
-async function chatCompletion(config, systemPrompt, userContent) {
+async function chatCompletion(config, systemPrompt, userContent, jsonMode) {
   const url = `${config.baseUrl || "https://api.openai.com/v1"}/chat/completions`;
 
   const headers = { "Content-Type": "application/json" };
@@ -8,19 +8,23 @@ async function chatCompletion(config, systemPrompt, userContent) {
     headers["Authorization"] = `Bearer ${config.apiKey}`;
   }
 
+  const body = {
+    model: config.model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ],
+    temperature: 0.1,
+    max_tokens: 1024,
+  };
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      temperature: 0.1,
-      max_tokens: 1024,
-      response_format: { type: "json_object" },
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -28,20 +32,22 @@ async function chatCompletion(config, systemPrompt, userContent) {
   }
 
   const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content;
+  const message = data?.choices?.[0]?.message;
+  const text = message?.content ?? message?.reasoning;
   if (typeof text !== "string") {
-    throw new Error("Unexpected response structure from API");
+    const preview = JSON.stringify(data).slice(0, 300);
+    throw new Error(`Model "${config.model}": empty response (${preview})`);
   }
   return text;
 }
 
 export async function complete(config, systemPrompt, userContent) {
-  return chatCompletion(config, systemPrompt, userContent);
+  return chatCompletion(config, systemPrompt, userContent, false);
 }
 
 export async function classify(config, subject, sender, body, tags) {
   const prompt = SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
-  const text = await chatCompletion(config, prompt, formatEmail(subject, sender, body));
+  const text = await chatCompletion(config, prompt, formatEmail(subject, sender, body), true);
   const result = safeParseJSON(text);
   const raw = extractTags(result);
   const filtered = filterTags(raw, tags);
@@ -60,7 +66,7 @@ export async function classifyBatch(config, emails, tags) {
     .map((e, i) => `Email ${i + 1}:\n${formatEmail(e.subject, e.sender, e.body)}`)
     .join("\n---\n");
 
-  const text = await chatCompletion(config, prompt, numbered);
+  const text = await chatCompletion(config, prompt, numbered, true);
   const result = safeParseJSON(text);
   const resultsArr = result.results || result.emails || [];
   const results = resultsArr.map((r) => filterTags(extractTags(r), tags));

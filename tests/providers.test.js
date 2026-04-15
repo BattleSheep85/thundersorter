@@ -209,7 +209,7 @@ describe("openai provider", async () => {
 
       await assert.rejects(
         () => openai.classify(config, "S", "F", "B", ["work"]),
-        (err) => err.message.includes("Unexpected response"),
+        (err) => err.message.includes("empty response"),
       );
     });
   });
