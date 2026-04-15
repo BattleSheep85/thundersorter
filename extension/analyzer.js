@@ -115,6 +115,43 @@ export function parseTagSuggestions(llmResponse) {
 }
 
 /**
+ * Inspect a response that produced no tags and return a short reason why.
+ * Returned reason fits in a status bar (≈80 chars).
+ * @param {string} llmResponse
+ * @returns {string}
+ */
+export function diagnoseEmptyTags(llmResponse) {
+  const raw = (llmResponse || "").trim();
+  if (raw.length === 0) return "AI returned an empty response.";
+
+  let cleaned = raw;
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+  }
+  const jsonText = (() => {
+    try { JSON.parse(cleaned); return cleaned; } catch { /* try extract */ }
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (m) { try { JSON.parse(m[0]); return m[0]; } catch { /* nope */ } }
+    return null;
+  })();
+
+  if (!jsonText) {
+    const preview = raw.slice(0, 80).replace(/\s+/g, " ");
+    return `AI didn't return JSON. Got: "${preview}${raw.length > 80 ? "…" : ""}"`;
+  }
+
+  const parsed = JSON.parse(jsonText);
+  const list = parsed.tags ?? parsed.suggestions ?? parsed.categories;
+  if (list === undefined) {
+    const keys = Object.keys(parsed).slice(0, 3).join(", ") || "(empty)";
+    return `AI's JSON had no "tags" field. Keys: ${keys}.`;
+  }
+  if (!Array.isArray(list)) return `AI's "tags" wasn't a list (got ${typeof list}).`;
+  if (list.length === 0) return "AI returned an empty tag list.";
+  return "AI's tags were all invalid (empty, too long, or non-string).";
+}
+
+/**
  * Build a refinement prompt for when the user wants to adjust suggestions.
  * @param {string[]} currentTags — current tag list
  * @param {string} userRequest — natural language request

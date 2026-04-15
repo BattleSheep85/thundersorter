@@ -1,5 +1,5 @@
 import { DEFAULT_TAGS, BUILTIN_PROVIDERS, PRESETS } from "../common.js";
-import { buildSample, buildAnalysisPrompt, parseTagSuggestions, buildRefinementPrompt } from "../analyzer.js";
+import { buildSample, buildAnalysisPrompt, parseTagSuggestions, buildRefinementPrompt, diagnoseEmptyTags } from "../analyzer.js";
 import { generateFolderName, buildDefaultMapping } from "../folder-router.js";
 import { generatePKCE, watchTab, exchangeCode, CALLBACK_URL } from "../oauth.js";
 
@@ -562,7 +562,7 @@ async function analyzeInbox() {
       document.getElementById("chatSection").classList.remove("hidden");
       showAnalyzeStatus(`Found ${tags.length} suggested tags.`, true);
     } else {
-      showAnalyzeStatus("AI couldn't suggest tags. Try a different provider.", false);
+      showAnalyzeStatus(diagnoseEmptyTags(response), false);
     }
   } catch (err) {
     showAnalyzeStatus(`Analysis failed: ${err.message}`, false);
@@ -592,7 +592,7 @@ document.getElementById("chatSend").addEventListener("click", async () => {
       renderSuggestions(tags);
       showAnalyzeStatus(`Refined to ${tags.length} tags.`, true);
     } else {
-      showAnalyzeStatus("Refinement produced no tags. Try a different request.", false);
+      showAnalyzeStatus(diagnoseEmptyTags(response), false);
     }
   } catch (err) {
     showAnalyzeStatus(`Refinement failed: ${err.message}`, false);

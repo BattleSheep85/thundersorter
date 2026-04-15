@@ -6,6 +6,7 @@ import {
   buildAnalysisPrompt,
   parseTagSuggestions,
   buildRefinementPrompt,
+  diagnoseEmptyTags,
 } from "../extension/analyzer.js";
 
 // --- buildSample ---
@@ -192,6 +193,43 @@ describe("parseTagSuggestions", () => {
       parseTagSuggestions('Here are my suggestions: {"tags": ["finance"]} Hope this helps!'),
       ["finance"],
     );
+  });
+});
+
+// --- diagnoseEmptyTags ---
+
+describe("diagnoseEmptyTags", () => {
+  it("flags an empty response", () => {
+    assert.match(diagnoseEmptyTags(""), /empty response/);
+    assert.match(diagnoseEmptyTags("   "), /empty response/);
+  });
+
+  it("flags non-JSON responses with a preview", () => {
+    const reason = diagnoseEmptyTags("I cannot help with that.");
+    assert.match(reason, /didn't return JSON/);
+    assert.match(reason, /I cannot help/);
+  });
+
+  it("flags JSON missing a tags field", () => {
+    const reason = diagnoseEmptyTags('{"foo": 1, "bar": 2}');
+    assert.match(reason, /no "tags" field/);
+    assert.match(reason, /foo/);
+  });
+
+  it("flags an empty tag list", () => {
+    assert.match(diagnoseEmptyTags('{"tags": []}'), /empty tag list/);
+  });
+
+  it("flags tags-not-a-list", () => {
+    assert.match(diagnoseEmptyTags('{"tags": "finance"}'), /wasn't a list/);
+  });
+
+  it("flags all-invalid tags", () => {
+    assert.match(diagnoseEmptyTags('{"tags": ["", "  "]}'), /all invalid/);
+  });
+
+  it("strips markdown fences before parsing", () => {
+    assert.match(diagnoseEmptyTags('```json\n{"tags": []}\n```'), /empty tag list/);
   });
 });
 
