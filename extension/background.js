@@ -8,6 +8,7 @@ import {
   SKIP_FOLDER_TYPES,
   normalizeSender,
   classifyFromHeaders,
+  isSensitiveEmail,
 } from "./common.js";
 
 import { explain } from "./diagnostics.js";
@@ -413,6 +414,21 @@ async function classifyMessage(message) {
 
     const body = await extractBody(message.id);
 
+    // Security gate: never send password resets, verification codes, etc. to an LLM
+    if (isSensitiveEmail(message.subject, body)) {
+      const safeTags = ["notifications"].filter((t) => allowedTags.includes(t));
+      diagInfo.skippedReason = "sensitive (password/token/verification)";
+      storeDiagnostic(message.id, diagInfo);
+      if (safeTags.length > 0) {
+        await applyTags(message, safeTags);
+        await routeMessageToFolder(message, safeTags);
+        classifiedCount++;
+        updateBadge();
+      }
+      console.log(`Thundersorter: skipped LLM for sensitive message ${message.id}`);
+      return;
+    }
+
     const resultTags = await provider.mod.classify(
       provider.config,
       message.subject || "",
@@ -600,16 +616,25 @@ async function classifyBatchWithProgress(messages) {
       // Tier 2: LLM classification (individual call)
       if (!resultTags) {
         const body = await extractBody(msg.id);
-        const llmTags = await provider.mod.classify(
-          provider.config,
-          msg.subject || "",
-          msg.author || "",
-          body,
-          allowedTags,
-        );
-        tier = "llm";
-        diagInfo.llmTags = llmTags || [];
-        if (llmTags && llmTags.length > 0) resultTags = llmTags;
+
+        // Security gate: skip LLM for sensitive emails
+        if (isSensitiveEmail(msg.subject, body)) {
+          tier = "security-filter";
+          diagInfo.skippedReason = "sensitive (password/token/verification)";
+          const safeTags = ["notifications"].filter((t) => allowedTags.includes(t));
+          if (safeTags.length > 0) resultTags = safeTags;
+        } else {
+          const llmTags = await provider.mod.classify(
+            provider.config,
+            msg.subject || "",
+            msg.author || "",
+            body,
+            allowedTags,
+          );
+          tier = "llm";
+          diagInfo.llmTags = llmTags || [];
+          if (llmTags && llmTags.length > 0) resultTags = llmTags;
+        }
       }
 
       storeDiagnostic(msg.id, diagInfo);

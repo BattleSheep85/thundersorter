@@ -2,6 +2,8 @@
  * Inbox analyzer — domain-stratified sampling and LLM-powered tag discovery.
  */
 
+import { isSensitiveEmail } from "./common.js";
+
 /**
  * Build a representative sample from a list of messages.
  * Uses domain-stratified temporal spread to get diverse coverage.
@@ -12,9 +14,14 @@
 export function buildSample(messages, targetSize = 75) {
   if (!messages || messages.length === 0) return [];
 
+  // Filter out security-sensitive emails (password resets, verification codes, etc.)
+  const safe = messages.filter((m) => !isSensitiveEmail(m.subject));
+
+  if (safe.length === 0) return [];
+
   // Group by sender domain
   const byDomain = new Map();
-  for (const msg of messages) {
+  for (const msg of safe) {
     const sender = (msg.author || "").toLowerCase();
     const domain = sender.includes("@") ? sender.split("@").pop() : "unknown";
     if (!byDomain.has(domain)) byDomain.set(domain, []);
@@ -23,7 +30,7 @@ export function buildSample(messages, targetSize = 75) {
 
   // Take from each domain proportionally, with a minimum of 1
   const domains = [...byDomain.entries()];
-  const totalMessages = messages.length;
+  const totalMessages = safe.length;
   const sample = [];
 
   for (const [, group] of domains) {

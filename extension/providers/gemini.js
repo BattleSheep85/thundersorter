@@ -48,6 +48,9 @@ async function generate(apiKey, model, systemPrompt, userContent, schema) {
   });
 
   if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error("Gemini rate limit reached. Wait a minute or check your API quota at console.cloud.google.com.");
+    }
     throw new Error(`Model "${model}": ${apiError(response.status, await response.text())}`);
   }
 

@@ -9,6 +9,7 @@ import {
   apiError,
   normalizeSender,
   classifyFromHeaders,
+  isSensitiveEmail,
   TAG_PREFIX,
   TAG_COLORS,
   DEFAULT_TAGS,
@@ -397,5 +398,66 @@ describe("PRESETS", () => {
 
   it("DEFAULT_TAGS equals home preset tags", () => {
     assert.deepEqual(DEFAULT_TAGS, PRESETS.home.tags);
+  });
+});
+
+// --- isSensitiveEmail ---
+
+describe("isSensitiveEmail", () => {
+  it("flags password reset subjects", () => {
+    assert.ok(isSensitiveEmail("Reset your password", ""));
+    assert.ok(isSensitiveEmail("Password Reset Request", ""));
+    assert.ok(isSensitiveEmail("Your password reset link", ""));
+  });
+
+  it("flags verification code subjects", () => {
+    assert.ok(isSensitiveEmail("Your verification code", ""));
+    assert.ok(isSensitiveEmail("Verify your email address", ""));
+    assert.ok(isSensitiveEmail("Confirm your account", ""));
+    assert.ok(isSensitiveEmail("Confirm your identity", ""));
+  });
+
+  it("flags 2FA and OTP subjects", () => {
+    assert.ok(isSensitiveEmail("Your two-factor code", ""));
+    assert.ok(isSensitiveEmail("Two-step verification", ""));
+    assert.ok(isSensitiveEmail("2FA code for your account", ""));
+    assert.ok(isSensitiveEmail("Your OTP is ready", ""));
+    assert.ok(isSensitiveEmail("One-time password", ""));
+    assert.ok(isSensitiveEmail("Multi-factor authentication", ""));
+  });
+
+  it("flags security alert subjects", () => {
+    assert.ok(isSensitiveEmail("Security alert: new login", ""));
+    assert.ok(isSensitiveEmail("Login attempt from new device", ""));
+    assert.ok(isSensitiveEmail("Sign-in code for your account", ""));
+    assert.ok(isSensitiveEmail("Suspicious activity detected", ""));
+    assert.ok(isSensitiveEmail("Unlock your account", ""));
+  });
+
+  it("flags magic link and access code subjects", () => {
+    assert.ok(isSensitiveEmail("Your magic link", ""));
+    assert.ok(isSensitiveEmail("Temporary password", ""));
+    assert.ok(isSensitiveEmail("Your access code", ""));
+    assert.ok(isSensitiveEmail("Account recovery", ""));
+  });
+
+  it("flags sensitive body content even with safe subject", () => {
+    assert.ok(isSensitiveEmail("Welcome!", "Your verification code: 123456"));
+    assert.ok(isSensitiveEmail("Hello", "Use this code: ABC123 to continue"));
+    assert.ok(isSensitiveEmail("Action needed", "Click here to reset your password immediately"));
+  });
+
+  it("allows normal emails through", () => {
+    assert.ok(!isSensitiveEmail("Invoice #1234", "Your order total is $50"));
+    assert.ok(!isSensitiveEmail("Weekly newsletter", "Top stories this week"));
+    assert.ok(!isSensitiveEmail("Meeting tomorrow", "Let's sync at 3pm"));
+    assert.ok(!isSensitiveEmail("Your flight booking", "Departure at 9am"));
+    assert.ok(!isSensitiveEmail("Re: Project update", "The code review is done"));
+  });
+
+  it("handles null/empty inputs", () => {
+    assert.ok(!isSensitiveEmail(null, null));
+    assert.ok(!isSensitiveEmail("", ""));
+    assert.ok(!isSensitiveEmail(undefined, undefined));
   });
 });

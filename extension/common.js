@@ -128,6 +128,45 @@ export function formatEmail(subject, sender, body) {
   return `Subject: ${subject}\nFrom: ${sender}\n\n${body.slice(0, 4000)}`;
 }
 
+// --- Security filter: never send sensitive auth emails to an LLM ---
+
+const SENSITIVE_SUBJECT_RE = new RegExp([
+  "password\\s*reset",
+  "reset\\s*(your\\s*)?password",
+  "verification\\s*code",
+  "verify\\s*(your\\s*)?(email|account|identity)",
+  "confirm\\s*(your\\s*)?(email|account|identity)",
+  "security\\s*(code|alert|notification)",
+  "login\\s*(code|verification|attempt)",
+  "sign[- ]?in\\s*(code|verification|attempt|link)",
+  "two[- ]?(factor|step)",
+  "\\b2fa\\b",
+  "multi[- ]?factor",
+  "one[- ]?time\\s*(password|code|pin)",
+  "\\botp\\b",
+  "account\\s*recovery",
+  "authentication\\s*code",
+  "magic\\s*link",
+  "temporary\\s*password",
+  "access\\s*code",
+  "unlock\\s*(your\\s*)?account",
+  "suspicious\\s*(activity|login|sign)",
+].join("|"), "i");
+
+const SENSITIVE_BODY_RE = new RegExp([
+  "reset\\s*(your\\s*)?password",
+  "verification\\s*code\\s*[:=]?\\s*\\d",
+  "\\buse\\s*(this\\s*)?code\\s*[:=]",
+  "\\btoken\\s*[:=]\\s*\\S",
+  "one[- ]?time\\s*(password|code)",
+].join("|"), "i");
+
+export function isSensitiveEmail(subject, body) {
+  if (SENSITIVE_SUBJECT_RE.test(subject || "")) return true;
+  if (SENSITIVE_BODY_RE.test((body || "").slice(0, 2000))) return true;
+  return false;
+}
+
 // --- Sender normalization ---
 
 export function normalizeSender(sender) {

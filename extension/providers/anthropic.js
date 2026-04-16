@@ -26,6 +26,9 @@ async function createMessage(config, systemPrompt, userContent) {
   });
 
   if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error("Anthropic rate limit reached. Check your usage at console.anthropic.com.");
+    }
     throw new Error(`Model "${config.model}": ${apiError(response.status, await response.text())}`);
   }
 

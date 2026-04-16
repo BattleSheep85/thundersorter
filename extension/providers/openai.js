@@ -28,6 +28,9 @@ async function chatCompletion(config, systemPrompt, userContent, jsonMode) {
   });
 
   if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error("Rate limit reached. Free tier allows ~50 requests/day. Add OpenRouter credits ($5 = 1,000/day) or use Ollama (unlimited, local).");
+    }
     throw new Error(`Model "${config.model}": ${apiError(response.status, await response.text())}`);
   }
 
