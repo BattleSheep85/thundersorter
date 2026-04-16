@@ -1,7 +1,7 @@
 import {
   TAG_PREFIX,
   TAG_COLORS,
-  DEFAULT_TAGS,
+  DEFAULT_FOLDERS,
   BATCH_SIZE,
   RETRY_INTERVAL_MS,
   BUILTIN_PROVIDERS,
@@ -12,7 +12,6 @@ import {
 } from "./common.js";
 
 import { explain } from "./diagnostics.js";
-import { resolveFolder } from "./folder-router.js";
 
 import * as gemini from "./providers/gemini.js";
 import * as openai from "./providers/openai.js";
@@ -120,21 +119,12 @@ async function getActiveProvider() {
   return { name: activeProvider, kind, config, mod };
 }
 
-async function getCustomTags() {
-  const { customTags } = await messenger.storage.local.get({ customTags: null });
-  return customTags || DEFAULT_TAGS;
+async function getCustomFolders() {
+  const { customFolders } = await messenger.storage.local.get({ customFolders: null });
+  return customFolders || DEFAULT_FOLDERS;
 }
 
 // --- Folder routing ---
-
-async function getFolderRoutingConfig() {
-  const data = await messenger.storage.local.get({
-    folderRoutingEnabled: false,
-    folderMapping: {},
-    tagPriority: [],
-  });
-  return data;
-}
 
 // Cache of created folders: folderName → folderId
 const FOLDER_CACHE_MAX = 200;
@@ -193,12 +183,7 @@ async function createFolderPath(account, folderName, cacheKey) {
   return parent;
 }
 
-async function routeMessageToFolder(message, tags) {
-  const { folderRoutingEnabled, folderMapping, tagPriority } = await getFolderRoutingConfig();
-  if (!folderRoutingEnabled) return;
-  if (!folderMapping || Object.keys(folderMapping).length === 0) return;
-
-  const folderName = resolveFolder(tags, folderMapping, tagPriority);
+async function routeMessageToFolder(message, folderName) {
   if (!folderName) return;
 
   try {
@@ -213,6 +198,7 @@ async function routeMessageToFolder(message, tags) {
     const targetFolder = await ensureFolderExists(account, folderName);
     if (!targetFolder) return;
 
+    markSelfMove(message.id);
     await messenger.messages.move([message.id], targetFolder.id);
     console.log(`Thundersorter: moved message ${message.id} to ${folderName}`);
   } catch (err) {
@@ -255,18 +241,19 @@ async function lookupSenderCache(sender) {
   const key = normalizeSender(sender);
   const entry = cache[key];
   if (!entry || entry.count < SENDER_CACHE_HIT_THRESHOLD) return null;
-  return entry.tags;
+  // Entry shape: { folder, count, lastSeen }
+  return entry.folder ? { folder: entry.folder } : null;
 }
 
-async function updateSenderCache(sender, tags) {
-  if (!tags || tags.length === 0) return;
+async function updateSenderCache(sender, folder) {
+  if (!folder) return;
   const cache = await getSenderCache();
   const key = normalizeSender(sender);
   const existing = cache[key];
 
-  const updated = existing
-    ? { tags: [...new Set([...existing.tags, ...tags])], count: existing.count + 1, lastSeen: Date.now() }
-    : { tags: [...tags], count: 1, lastSeen: Date.now() };
+  const updated = existing && existing.folder === folder
+    ? { folder, count: existing.count + 1, lastSeen: Date.now() }
+    : { folder, count: 1, lastSeen: Date.now() };
 
   const newCache = { ...cache, [key]: updated };
 
@@ -355,6 +342,21 @@ async function extractBody(messageId) {
 
 // --- Classification ---
 
+async function applyClassification(message, folder, flags, diagInfo) {
+  if (flags && flags.length > 0) {
+    await applyTags(message, flags);
+  }
+  if (folder) {
+    await updateSenderCache(message.author || "", folder);
+    await routeMessageToFolder(message, folder);
+  }
+  classifiedCount++;
+  updateBadge();
+  diagInfo.folder = folder;
+  diagInfo.flags = flags || [];
+  storeDiagnostic(message.id, diagInfo);
+}
+
 async function classifyMessage(message) {
   if (hasThundersorterTags(message)) return;
   if (classifyingNow.has(message.id)) return;
@@ -362,46 +364,33 @@ async function classifyMessage(message) {
   if (!(await hasConsent())) return;
 
   classifyingNow.add(message.id);
-  const diagInfo = { allowedTags: [], existingTags: [] };
+  const diagInfo = { allowedFolders: [], existingTags: [] };
 
   try {
-    const allowedTags = await getCustomTags();
-    diagInfo.allowedTags = allowedTags;
+    const allowedFolders = await getCustomFolders();
+    diagInfo.allowedFolders = allowedFolders;
 
     // Tier 0: Header-based pre-classification (zero API cost)
     try {
       const headers = await getMessageHeaders(message.id);
-      const headerTags = classifyFromHeaders(headers).filter((t) => allowedTags.includes(t));
-      if (headerTags.length > 0) {
-        diagInfo.headerTags = headerTags;
-        storeDiagnostic(message.id, diagInfo);
-        await applyTags(message, headerTags);
-        await updateSenderCache(message.author || "", headerTags);
-        await routeMessageToFolder(message, headerTags);
-        classifiedCount++;
-        updateBadge();
-        console.log(`Thundersorter: tagged message ${message.id} via headers [${headerTags.join(", ")}]`);
+      const headerFolder = classifyFromHeaders(headers);
+      if (headerFolder && allowedFolders.includes(headerFolder)) {
+        diagInfo.headerFolder = headerFolder;
+        await applyClassification(message, headerFolder, [], diagInfo);
+        console.log(`Thundersorter: routed message ${message.id} via headers → ${headerFolder}`);
         return;
       }
     } catch (err) {
-      // Header scan failed (e.g., message deleted) — continue to next tier
       console.debug(`Thundersorter: header scan failed for ${message.id}:`, err.message);
     }
 
     // Tier 1: Sender cache lookup (zero API cost)
-    const cachedTags = await lookupSenderCache(message.author || "");
-    if (cachedTags && cachedTags.length > 0) {
-      const validCached = cachedTags.filter((t) => allowedTags.includes(t));
-      if (validCached.length > 0) {
-        diagInfo.senderCacheTags = validCached;
-        storeDiagnostic(message.id, diagInfo);
-        await applyTags(message, validCached);
-        await routeMessageToFolder(message, validCached);
-        classifiedCount++;
-        updateBadge();
-        console.log(`Thundersorter: tagged message ${message.id} via sender cache [${validCached.join(", ")}]`);
-        return;
-      }
+    const cached = await lookupSenderCache(message.author || "");
+    if (cached && allowedFolders.includes(cached.folder)) {
+      diagInfo.senderCacheFolder = cached.folder;
+      await applyClassification(message, cached.folder, [], diagInfo);
+      console.log(`Thundersorter: routed message ${message.id} via sender cache → ${cached.folder}`);
+      return;
     }
 
     // Tier 2+3: LLM classification (API cost)
@@ -416,38 +405,31 @@ async function classifyMessage(message) {
 
     // Security gate: never send password resets, verification codes, etc. to an LLM
     if (isSensitiveEmail(message.subject, body)) {
-      const safeTags = ["notifications"].filter((t) => allowedTags.includes(t));
       diagInfo.skippedReason = "sensitive (password/token/verification)";
-      storeDiagnostic(message.id, diagInfo);
-      if (safeTags.length > 0) {
-        await applyTags(message, safeTags);
-        await routeMessageToFolder(message, safeTags);
-        classifiedCount++;
-        updateBadge();
-      }
+      const safeFolder = allowedFolders.includes("Notifications") ? "Notifications" : "";
+      await applyClassification(message, safeFolder, [], diagInfo);
       console.log(`Thundersorter: skipped LLM for sensitive message ${message.id}`);
       return;
     }
 
-    const resultTags = await provider.mod.classify(
+    const { folder, flags } = await provider.mod.classify(
       provider.config,
       message.subject || "",
       message.author || "",
       body,
-      allowedTags,
+      allowedFolders,
     );
 
-    diagInfo.llmTags = resultTags || [];
-    storeDiagnostic(message.id, diagInfo);
+    diagInfo.llmFolder = folder;
+    diagInfo.llmFlags = flags || [];
 
-    if (!resultTags || resultTags.length === 0) return;
+    if (!folder && (!flags || flags.length === 0)) {
+      storeDiagnostic(message.id, diagInfo);
+      return;
+    }
 
-    await applyTags(message, resultTags);
-    await updateSenderCache(message.author || "", resultTags);
-    await routeMessageToFolder(message, resultTags);
-    classifiedCount++;
-    updateBadge();
-    console.log(`Thundersorter: tagged message ${message.id} with [${resultTags.join(", ")}]`);
+    await applyClassification(message, folder, flags, diagInfo);
+    console.log(`Thundersorter: sorted ${message.id} → ${folder || "(no folder)"} flags=[${(flags || []).join(",")}]`);
   } catch (err) {
     diagInfo.providerError = err.message;
     storeDiagnostic(message.id, diagInfo);
@@ -560,7 +542,7 @@ async function classifyBatchWithProgress(messages) {
   }
 
   const windowId = await openProgressWindow();
-  const allowedTags = await getCustomTags();
+  const allowedFolders = await getCustomFolders();
 
   const untagged = messages.filter((m) => !hasThundersorterTags(m));
   const total = untagged.length;
@@ -584,65 +566,65 @@ async function classifyBatchWithProgress(messages) {
 
     sendProgress(windowId, processed, total, tagged, msg.subject || "");
 
-    const diagInfo = { allowedTags };
+    const diagInfo = { allowedFolders };
     let tier = "";
+    let folder = "";
+    let flags = [];
 
     try {
       // Tier 0: Header-based pre-classification
-      let resultTags = null;
       try {
         const headers = await getMessageHeaders(msg.id);
-        const headerTags = classifyFromHeaders(headers).filter((t) => allowedTags.includes(t));
-        if (headerTags.length > 0) {
-          resultTags = headerTags;
+        const headerFolder = classifyFromHeaders(headers);
+        if (headerFolder && allowedFolders.includes(headerFolder)) {
+          folder = headerFolder;
           tier = "headers";
-          diagInfo.headerTags = headerTags;
+          diagInfo.headerFolder = folder;
         }
       } catch (_) { /* header scan failed, continue */ }
 
       // Tier 1: Sender cache
-      if (!resultTags) {
+      if (!folder) {
         const cached = await lookupSenderCache(msg.author || "");
-        if (cached && cached.length > 0) {
-          const valid = cached.filter((t) => allowedTags.includes(t));
-          if (valid.length > 0) {
-            resultTags = valid;
-            tier = "sender-cache";
-            diagInfo.senderCacheTags = valid;
-          }
+        if (cached && allowedFolders.includes(cached.folder)) {
+          folder = cached.folder;
+          tier = "sender-cache";
+          diagInfo.senderCacheFolder = folder;
         }
       }
 
       // Tier 2: LLM classification (individual call)
-      if (!resultTags) {
+      if (!folder) {
         const body = await extractBody(msg.id);
 
-        // Security gate: skip LLM for sensitive emails
         if (isSensitiveEmail(msg.subject, body)) {
           tier = "security-filter";
           diagInfo.skippedReason = "sensitive (password/token/verification)";
-          const safeTags = ["notifications"].filter((t) => allowedTags.includes(t));
-          if (safeTags.length > 0) resultTags = safeTags;
+          if (allowedFolders.includes("Notifications")) folder = "Notifications";
         } else {
-          const llmTags = await provider.mod.classify(
+          const llm = await provider.mod.classify(
             provider.config,
             msg.subject || "",
             msg.author || "",
             body,
-            allowedTags,
+            allowedFolders,
           );
           tier = "llm";
-          diagInfo.llmTags = llmTags || [];
-          if (llmTags && llmTags.length > 0) resultTags = llmTags;
+          diagInfo.llmFolder = llm.folder;
+          diagInfo.llmFlags = llm.flags || [];
+          folder = llm.folder;
+          flags = llm.flags || [];
         }
       }
 
       storeDiagnostic(msg.id, diagInfo);
 
-      if (resultTags && resultTags.length > 0) {
-        await applyTags(msg, resultTags);
-        await updateSenderCache(msg.author || "", resultTags);
-        await routeMessageToFolder(msg, resultTags);
+      if (folder || flags.length > 0) {
+        if (flags.length > 0) await applyTags(msg, flags);
+        if (folder) {
+          await updateSenderCache(msg.author || "", folder);
+          await routeMessageToFolder(msg, folder);
+        }
         tagged++;
         classifiedCount++;
       }
@@ -737,12 +719,12 @@ async function openDiagnosticPopup(message) {
   // Look up cached diagnostic, or build one from current state
   let diagInfo = diagCache.get(message.id);
   if (!diagInfo) {
-    const allowedTags = await getCustomTags();
+    const allowedFolders = await getCustomFolders();
     const existingTsTags = (message.tags || [])
       .filter((t) => t.startsWith(TAG_PREFIX))
       .map((t) => t.slice(TAG_PREFIX.length));
 
-    diagInfo = { allowedTags, existingTags: existingTsTags };
+    diagInfo = { allowedFolders, existingTags: existingTsTags };
   }
 
   const diagnostic = explain(diagInfo);
@@ -780,21 +762,31 @@ messenger.messages.onNewMailReceived.addListener(async (folder, messages) => {
   }
 });
 
-// --- User correction listener: update sender cache when user changes tags ---
+// --- User correction listener: when the user moves a message into one of our folders,
+// learn that the sender belongs there. Listener only fires for user-initiated moves
+// because we track our own recent moves and skip them. ---
 
-messenger.messages.onUpdated.addListener(async (message, changedProperties) => {
-  if (!changedProperties.tags) return;
+const recentSelfMoves = new Set();
+const SELF_MOVE_TTL_MS = 5000;
 
-  const newTsTags = (changedProperties.tags || [])
-    .filter((t) => t.startsWith(TAG_PREFIX))
-    .map((t) => t.slice(TAG_PREFIX.length));
+function markSelfMove(messageId) {
+  recentSelfMoves.add(messageId);
+  setTimeout(() => recentSelfMoves.delete(messageId), SELF_MOVE_TTL_MS);
+}
 
-  // Update sender cache with user's preferred tags
-  if (message.author && newTsTags.length > 0) {
-    await updateSenderCache(message.author, newTsTags);
-    console.log(`Thundersorter: sender cache updated from user correction on ${message.id}`);
-  }
-});
+if (messenger.messages.onMoved) {
+  messenger.messages.onMoved.addListener(async ({ messages }) => {
+    const allowedFolders = await getCustomFolders();
+    for (const msg of messages.messages) {
+      if (recentSelfMoves.has(msg.id)) continue;
+      const folderName = msg.folder?.name;
+      if (folderName && allowedFolders.includes(folderName) && msg.author) {
+        await updateSenderCache(msg.author, folderName);
+        console.log(`Thundersorter: learned "${folderName}" for ${msg.author} from user move`);
+      }
+    }
+  });
+}
 
 // Periodic retry queue drain
 setInterval(processRetryQueue, RETRY_INTERVAL_MS);

@@ -1,4 +1,20 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, extractTags, safeParseJSON, apiError } from "../common.js";
+import {
+  SYSTEM_PROMPT,
+  BATCH_SYSTEM_PROMPT,
+  ATTRIBUTE_FLAGS,
+  formatEmail,
+  filterFolder,
+  filterFlags,
+  extractFolderAndFlags,
+  safeParseJSON,
+  apiError,
+} from "../common.js";
+
+function buildPrompt(template, folders) {
+  return template
+    .replaceAll("{folders}", folders.join(", "))
+    .replaceAll("{flags}", ATTRIBUTE_FLAGS.join(", "));
+}
 
 const JSON_INSTRUCTION = '\nRespond with ONLY a JSON object. No other text.\n';
 
@@ -44,28 +60,19 @@ export async function complete(config, systemPrompt, userContent) {
   return createMessage(config, systemPrompt, userContent);
 }
 
-export async function classify(config, subject, sender, body, tags) {
-  const prompt =
-    SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", ")) +
-    JSON_INSTRUCTION +
-    '{"tags": [...]}\n';
-
+export async function classify(config, subject, sender, body, folders) {
+  const prompt = buildPrompt(SYSTEM_PROMPT, folders) + JSON_INSTRUCTION;
   const text = await createMessage(config, prompt, formatEmail(subject, sender, body));
   const result = safeParseJSON(text);
-  const raw = extractTags(result);
-  const filtered = filterTags(raw, tags);
-  if (raw.length > 0 && filtered.length === 0) {
-    console.warn("Thundersorter: LLM returned tags but none matched allowed list:", JSON.stringify(raw));
-  }
-  return filtered;
+  const { folder, flags } = extractFolderAndFlags(result);
+  return {
+    folder: filterFolder(folder, folders),
+    flags: filterFlags(flags),
+  };
 }
 
-export async function classifyBatch(config, emails, tags) {
-  const prompt =
-    BATCH_SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", ")) +
-    JSON_INSTRUCTION +
-    '{"results": [{"tags": [...]}, ...]}\n';
-
+export async function classifyBatch(config, emails, folders) {
+  const prompt = buildPrompt(BATCH_SYSTEM_PROMPT, folders) + JSON_INSTRUCTION;
   const numbered = emails
     .map((e, i) => `Email ${i + 1}:\n${formatEmail(e.subject, e.sender, e.body)}`)
     .join("\n---\n");
@@ -73,7 +80,10 @@ export async function classifyBatch(config, emails, tags) {
   const text = await createMessage(config, prompt, numbered);
   const result = safeParseJSON(text);
   const resultsArr = result.results || result.emails || [];
-  const results = resultsArr.map((r) => filterTags(extractTags(r), tags));
+  const results = resultsArr.map((r) => {
+    const { folder, flags } = extractFolderAndFlags(r);
+    return { folder: filterFolder(folder, folders), flags: filterFlags(flags) };
+  });
   if (results.length !== emails.length) {
     console.warn(`Thundersorter: batch result count mismatch (got ${results.length}, expected ${emails.length})`);
   }

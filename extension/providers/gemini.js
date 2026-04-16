@@ -1,11 +1,22 @@
-import { SYSTEM_PROMPT, BATCH_SYSTEM_PROMPT, formatEmail, filterTags, extractTags, safeParseJSON, apiError } from "../common.js";
+import {
+  SYSTEM_PROMPT,
+  BATCH_SYSTEM_PROMPT,
+  ATTRIBUTE_FLAGS,
+  formatEmail,
+  filterFolder,
+  filterFlags,
+  extractFolderAndFlags,
+  safeParseJSON,
+  apiError,
+} from "../common.js";
 
-const TAG_SCHEMA = {
+const CLASSIFY_SCHEMA = {
   type: "OBJECT",
   properties: {
-    tags: { type: "ARRAY", items: { type: "STRING" } },
+    folder: { type: "STRING" },
+    flags: { type: "ARRAY", items: { type: "STRING" } },
   },
-  required: ["tags"],
+  required: ["folder"],
 };
 
 const BATCH_SCHEMA = {
@@ -16,14 +27,21 @@ const BATCH_SCHEMA = {
       items: {
         type: "OBJECT",
         properties: {
-          tags: { type: "ARRAY", items: { type: "STRING" } },
+          folder: { type: "STRING" },
+          flags: { type: "ARRAY", items: { type: "STRING" } },
         },
-        required: ["tags"],
+        required: ["folder"],
       },
     },
   },
   required: ["results"],
 };
+
+function buildPrompt(template, folders) {
+  return template
+    .replaceAll("{folders}", folders.join(", "))
+    .replaceAll("{flags}", ATTRIBUTE_FLAGS.join(", "));
+}
 
 async function generate(apiKey, model, systemPrompt, userContent, schema) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -66,26 +84,25 @@ export async function complete(config, systemPrompt, userContent) {
   return generate(config.apiKey, config.model, systemPrompt, userContent, null);
 }
 
-export async function classify(config, subject, sender, body, tags) {
-  const prompt = SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
+export async function classify(config, subject, sender, body, folders) {
+  const prompt = buildPrompt(SYSTEM_PROMPT, folders);
   const text = await generate(
     config.apiKey,
     config.model,
     prompt,
     formatEmail(subject, sender, body),
-    TAG_SCHEMA,
+    CLASSIFY_SCHEMA,
   );
   const result = safeParseJSON(text);
-  const raw = extractTags(result);
-  const filtered = filterTags(raw, tags);
-  if (raw.length > 0 && filtered.length === 0) {
-    console.warn("Thundersorter: LLM returned tags but none matched allowed list:", JSON.stringify(raw));
-  }
-  return filtered;
+  const { folder, flags } = extractFolderAndFlags(result);
+  return {
+    folder: filterFolder(folder, folders),
+    flags: filterFlags(flags),
+  };
 }
 
-export async function classifyBatch(config, emails, tags) {
-  const prompt = BATCH_SYSTEM_PROMPT.replaceAll("{tags}", tags.join(", "));
+export async function classifyBatch(config, emails, folders) {
+  const prompt = buildPrompt(BATCH_SYSTEM_PROMPT, folders);
   const numbered = emails
     .map((e, i) => `Email ${i + 1}:\n${formatEmail(e.subject, e.sender, e.body)}`)
     .join("\n---\n");
@@ -93,7 +110,10 @@ export async function classifyBatch(config, emails, tags) {
   const text = await generate(config.apiKey, config.model, prompt, numbered, BATCH_SCHEMA);
   const result = safeParseJSON(text);
   const resultsArr = result.results || result.emails || [];
-  const results = resultsArr.map((r) => filterTags(extractTags(r), tags));
+  const results = resultsArr.map((r) => {
+    const { folder, flags } = extractFolderAndFlags(r);
+    return { folder: filterFolder(folder, folders), flags: filterFlags(flags) };
+  });
   if (results.length !== emails.length) {
     console.warn(`Thundersorter: batch result count mismatch (got ${results.length}, expected ${emails.length})`);
   }

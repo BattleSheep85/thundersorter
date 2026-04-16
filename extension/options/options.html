@@ -213,7 +213,8 @@
     <p class="hint">Models are fetched from your provider. The best option is selected automatically.</p>
   </div>
 
-  <h2>Tags</h2>
+  <h2>Folders</h2>
+  <p class="hint">Emails are sorted into one of these folders automatically. Flags (urgent, action-required, receipt) are applied as tags.</p>
 
   <label for="modeSelect">Mode</label>
   <select id="modeSelect">
@@ -222,15 +223,15 @@
     <option value="minimal">Minimal</option>
     <option value="custom">Custom</option>
   </select>
-  <p class="hint">Choose a preset to replace your tags, or pick Custom to keep your own.</p>
+  <p class="hint">Choose a preset to replace your folders, or pick Custom to keep your own.</p>
 
-  <ul id="tagList" class="tag-list"></ul>
+  <ul id="folderList" class="tag-list"></ul>
   <div class="add-row">
-    <input type="text" id="newTag" placeholder="Add a tag (e.g., invoices)" maxlength="30">
-    <button id="addTag">Add</button>
+    <input type="text" id="newFolder" placeholder="Add a folder (e.g., Invoices)" maxlength="30">
+    <button id="addFolder">Add</button>
   </div>
   <div style="margin-top: 12px; display: flex; gap: 8px;">
-    <button id="resetTags" class="secondary">Reset to Defaults</button>
+    <button id="resetFolders" class="secondary">Reset to Defaults</button>
     <button id="analyzeInbox" class="secondary">Analyze Inbox</button>
   </div>
 
@@ -239,27 +240,10 @@
     <div id="suggestedTags"></div>
     <div id="chatSection" class="hidden">
       <div class="add-row" style="margin-top: 12px;">
-        <input type="text" id="chatInput" placeholder='e.g., "add a health tag" or "fewer categories"' maxlength="200">
+        <input type="text" id="chatInput" placeholder='e.g., "add a Health folder" or "fewer categories"' maxlength="200">
         <button id="chatSend">Refine</button>
       </div>
     </div>
-  </div>
-
-  <h2>Folder Routing</h2>
-
-  <label style="display: flex; align-items: center; gap: 8px; font-weight: normal;">
-    <input type="checkbox" id="folderRoutingEnabled">
-    Automatically move tagged emails to folders
-  </label>
-  <p class="hint">When enabled, emails are moved to matching folders after classification. Folders are created automatically.</p>
-
-  <div id="folderMappingSection" class="hidden">
-    <label>Tag Priority (drag to reorder — highest priority first)</label>
-    <ul id="priorityList" class="tag-list"></ul>
-
-    <p class="hint" style="margin-top: 12px;">
-      Folder names are generated from your tags. In Business mode, folders are grouped under "Sorted/".
-    </p>
   </div>
 
   <script src="options.js" type="module"></script>

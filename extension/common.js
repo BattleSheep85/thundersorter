@@ -1,43 +1,31 @@
 export const TAG_PREFIX = "ts_";
 
+// Attribute flags are the only secondary tags. Folders handle primary categorization.
+export const ATTRIBUTE_FLAGS = ["action-required", "urgent", "receipt"];
+
 export const TAG_COLORS = {
-  finance: "#2E7D32",
-  receipts: "#1565C0",
-  newsletters: "#6A1B9A",
-  social: "#E91E63",
-  work: "#F57F17",
-  personal: "#00838F",
-  notifications: "#78909C",
-  shipping: "#4E342E",
-  travel: "#00695C",
-  promotions: "#D84315",
-  health: "#00897B",
   "action-required": "#D32F2F",
-  clients: "#1565C0",
-  projects: "#6A1B9A",
-  "follow-up": "#F9A825",
-  meetings: "#5E35B1",
-  internal: "#546E7A",
-  reports: "#3949AB",
-  important: "#C62828",
+  urgent: "#E65100",
+  receipt: "#1565C0",
 };
 
-export const PRESETS = {
+// Folder presets — the primary bucket each email gets moved into.
+export const FOLDER_PRESETS = {
   home: {
     label: "Home",
-    tags: ["finance", "receipts", "newsletters", "social", "promotions", "shipping", "travel", "notifications", "personal", "health"],
+    folders: ["Finance", "Shopping", "Travel", "Personal", "Newsletters", "Notifications"],
   },
   business: {
     label: "Business",
-    tags: ["clients", "projects", "action-required", "follow-up", "finance", "meetings", "internal", "reports", "newsletters", "notifications"],
+    folders: ["Clients", "Projects", "Meetings", "Reports", "Internal", "Newsletters", "Notifications"],
   },
   minimal: {
     label: "Minimal",
-    tags: ["important", "finance", "newsletters", "notifications"],
+    folders: ["Important", "Newsletters", "Notifications"],
   },
 };
 
-export const DEFAULT_TAGS = PRESETS.home.tags;
+export const DEFAULT_FOLDERS = FOLDER_PRESETS.home.folders;
 
 export const BATCH_SIZE = 10;
 export const RETRY_INTERVAL_MS = 60_000;
@@ -91,37 +79,41 @@ export const BUILTIN_PROVIDERS = {
 };
 
 export const SYSTEM_PROMPT = `\
-You are an email classifier. Given an email's subject, sender, and body,
-assign one or more tags from the allowed list. Return ONLY tags that clearly
-apply. If nothing fits, return an empty list.
+You are an email sorter. Given an email's subject, sender, and body, choose
+exactly ONE folder from the allowed list and zero or more flags from the allowed
+flag list.
 
-Allowed tags: {tags}
+Allowed folders: {folders}
+Allowed flags: {flags}
 
 Rules:
-- Be precise: only assign tags with high confidence.
-- An email can have multiple tags (e.g., a shipping receipt is both "shipping" and "receipts").
-- Newsletters and marketing emails should get "newsletters" or "promotions" as appropriate.
-- Automated notifications (password resets, login alerts, CI builds) get "notifications".
+- "folder" is the single best fit. If nothing fits, use "" (empty string).
+- "flags" is a subset of the allowed flag list. Only add a flag when it clearly applies:
+  - "action-required": needs a response or action from the user
+  - "urgent": time-sensitive (deadlines, emergencies)
+  - "receipt": a record worth keeping (invoices, order confirmations, tax docs)
+- Automated notifications (login alerts, CI builds, shipping updates) usually go in "Notifications".
+- Marketing and newsletters go in "Newsletters" or the matching folder.
 
-Respond with ONLY a JSON object in this exact format: {"tags": ["tag1", "tag2"]}
+Respond with ONLY a JSON object in this exact format: {"folder": "Name", "flags": ["flag1"]}
 `;
 
 export const BATCH_SYSTEM_PROMPT = `\
-You are an email classifier. You will receive multiple emails, each numbered.
-For each email, assign one or more tags from the allowed list. Return ONLY tags
-that clearly apply. If nothing fits for an email, return an empty list for it.
+You are an email sorter. You will receive multiple emails, each numbered.
+For each email, choose exactly ONE folder from the allowed list and zero or more
+flags from the allowed flag list. Return results in the same order as the input.
 
-Return results in the same order as the input emails.
-
-Allowed tags: {tags}
+Allowed folders: {folders}
+Allowed flags: {flags}
 
 Rules:
-- Be precise: only assign tags with high confidence.
-- An email can have multiple tags (e.g., a shipping receipt is both "shipping" and "receipts").
-- Newsletters and marketing emails should get "newsletters" or "promotions" as appropriate.
-- Automated notifications (password resets, login alerts, CI builds) get "notifications".
+- "folder" is the single best fit. If nothing fits, use "" (empty string).
+- "flags" is a subset of the allowed flag list. Only add a flag when it clearly applies:
+  - "action-required": needs a response or action from the user
+  - "urgent": time-sensitive (deadlines, emergencies)
+  - "receipt": a record worth keeping (invoices, order confirmations, tax docs)
 
-Respond with ONLY a JSON object in this exact format: {"results": [{"tags": ["tag1"]}, {"tags": ["tag2"]}]}
+Respond with ONLY a JSON object in this exact format: {"results": [{"folder": "Name", "flags": ["flag1"]}, {"folder": "Name", "flags": []}]}
 `;
 
 export function formatEmail(subject, sender, body) {
@@ -176,60 +168,65 @@ export function normalizeSender(sender) {
 
 // --- Header-based pre-classification ---
 
+// Returns a folder NAME (case-sensitive match against allowed folders) or "" if unknown.
 export function classifyFromHeaders(headers) {
-  const tags = [];
-
   const listUnsub = headers["list-unsubscribe"]?.[0];
   const listId = headers["list-id"]?.[0];
   const precedence = (headers["precedence"]?.[0] || "").toLowerCase();
-
-  if (precedence === "bulk" || precedence === "junk") {
-    tags.push("promotions");
-  } else if (listUnsub || listId || precedence === "list") {
-    tags.push("newsletters");
-  }
-
   const autoSuppress = headers["x-auto-response-suppress"]?.[0];
-  if (autoSuppress) {
-    tags.push("notifications");
-  }
-
   const returnPath = (headers["return-path"]?.[0] || "").toLowerCase();
   const from = (headers["from"]?.[0] || "").toLowerCase();
 
-  if (/no-?reply|donotreply|mailer-daemon/i.test(returnPath) ||
-      /no-?reply|donotreply/i.test(from)) {
-    if (!tags.includes("newsletters") && !tags.includes("promotions")) {
-      tags.push("notifications");
-    }
+  if (listUnsub || listId || precedence === "list" || precedence === "bulk") {
+    return "Newsletters";
   }
 
-  return [...new Set(tags)];
+  if (autoSuppress) return "Notifications";
+
+  if (/no-?reply|donotreply|mailer-daemon/i.test(returnPath) ||
+      /no-?reply|donotreply/i.test(from)) {
+    return "Notifications";
+  }
+
+  return "";
 }
 
 /**
- * Extract tags array from an LLM response object.
- * Models return tags under various key names — try them all.
+ * Extract {folder, flags} from an LLM response object, tolerant of schema drift.
+ * Folder may appear under "folder"/"category"/"bucket". Flags may be "flags"/"tags"/"labels".
  */
-export function extractTags(result) {
-  if (!result || typeof result !== "object") return [];
-  // Try common key names models use
-  const candidates = result.tags ?? result.tag ?? result.labels ??
-    result.categories ?? result.classification ?? result.category;
-  if (candidates != null) return candidates;
-  // If the result has a single array value, use it
-  const values = Object.values(result);
-  if (values.length === 1 && Array.isArray(values[0])) return values[0];
-  return [];
+export function extractFolderAndFlags(result) {
+  if (!result || typeof result !== "object") return { folder: "", flags: [] };
+  const folderRaw = result.folder ?? result.category ?? result.bucket ?? result.classification ?? "";
+  const flagsRaw = result.flags ?? result.tags ?? result.labels ?? [];
+  return {
+    folder: typeof folderRaw === "string" ? folderRaw : "",
+    flags: Array.isArray(flagsRaw) ? flagsRaw : typeof flagsRaw === "string" ? [flagsRaw] : [],
+  };
 }
 
-export function filterTags(tags, allowed) {
-  // Handle models that return a string instead of an array
-  const arr = Array.isArray(tags) ? tags : typeof tags === "string" ? [tags] : [];
-  const lower = allowed.map((t) => t.toLowerCase());
-  return arr
-    .map((t) => (typeof t === "string" ? t.trim().toLowerCase() : ""))
-    .filter((t) => lower.includes(t));
+/**
+ * Filter a folder name against the allowed list. Case-insensitive match, returns the canonical
+ * spelling from the allowed list, or "" if no match.
+ */
+export function filterFolder(folder, allowed) {
+  if (typeof folder !== "string") return "";
+  const lower = folder.trim().toLowerCase();
+  if (!lower) return "";
+  return allowed.find((f) => f.toLowerCase() === lower) || "";
+}
+
+/**
+ * Filter flags against the allowed attribute list. Returns lowercase canonical spellings.
+ */
+export function filterFlags(flags, allowed = ATTRIBUTE_FLAGS) {
+  const arr = Array.isArray(flags) ? flags : typeof flags === "string" ? [flags] : [];
+  const lower = allowed.map((f) => f.toLowerCase());
+  return [...new Set(
+    arr
+      .map((f) => (typeof f === "string" ? f.trim().toLowerCase() : ""))
+      .filter((f) => lower.includes(f)),
+  )];
 }
 
 /**

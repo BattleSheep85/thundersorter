@@ -1,14 +1,11 @@
-import { DEFAULT_TAGS, BUILTIN_PROVIDERS, PRESETS } from "../common.js";
-import { buildSample, buildAnalysisPrompt, parseTagSuggestions, buildRefinementPrompt, diagnoseEmptyTags } from "../analyzer.js";
-import { generateFolderName, buildDefaultMapping } from "../folder-router.js";
+import { DEFAULT_FOLDERS, BUILTIN_PROVIDERS, FOLDER_PRESETS } from "../common.js";
+import { buildSample, buildAnalysisPrompt, parseFolderSuggestions, buildRefinementPrompt, diagnoseEmptyFolders } from "../analyzer.js";
 import { generatePKCE, watchTab, exchangeCode, CALLBACK_URL } from "../oauth.js";
 
-let currentTags = [];
+let currentFolders = [];
 let currentMode = "home";
 let providerConfigs = {};
 let activeProvider = "";
-let folderRoutingEnabled = false;
-let tagPriority = [];
 
 // --- PKCE OAuth ---
 
@@ -77,10 +74,10 @@ async function loadConsentStatus() {
 
   if (dataConsentGiven) {
     banner.classList.add("ok");
-    message.textContent = "Data consent: enabled. Email data will be sent to your AI provider for classification.";
+    message.textContent = "Data consent: enabled. Email data will be sent to your AI provider for sorting.";
   } else {
     banner.classList.add("warn");
-    message.textContent = "Data consent: not given. Classification is disabled until you consent.";
+    message.textContent = "Data consent: not given. Sorting is disabled until you consent.";
   }
 }
 
@@ -90,31 +87,20 @@ async function loadAll() {
   const data = await messenger.storage.local.get({
     activeProvider: "",
     providerConfigs: {},
-    customTags: null,
-    tagMode: "home",
-    folderRoutingEnabled: false,
-    tagPriority: [],
+    customFolders: null,
+    folderMode: "home",
   });
 
   activeProvider = data.activeProvider;
   providerConfigs = data.providerConfigs;
-  currentMode = data.tagMode || "home";
-  currentTags = data.customTags || [...DEFAULT_TAGS];
-  folderRoutingEnabled = data.folderRoutingEnabled || false;
-  tagPriority = data.tagPriority || [];
+  currentMode = data.folderMode || "home";
+  currentFolders = data.customFolders || [...DEFAULT_FOLDERS];
 
   buildProviderDropdown();
   document.getElementById("modeSelect").value = currentMode;
-  renderTags();
+  renderFolders();
   loadConsentStatus();
   updateConnectionStatus();
-
-  // Folder routing UI
-  document.getElementById("folderRoutingEnabled").checked = folderRoutingEnabled;
-  if (folderRoutingEnabled) {
-    document.getElementById("folderMappingSection").classList.remove("hidden");
-    renderPriorityList();
-  }
 
   if (activeProvider) {
     document.getElementById("provider").value = activeProvider;
@@ -126,8 +112,8 @@ async function saveAll() {
   await messenger.storage.local.set({ activeProvider, providerConfigs });
 }
 
-async function saveTags() {
-  await messenger.storage.local.set({ customTags: currentTags, tagMode: currentMode });
+async function saveFolders() {
+  await messenger.storage.local.set({ customFolders: currentFolders, folderMode: currentMode });
 }
 
 // --- Provider dropdown ---
@@ -152,7 +138,6 @@ function onProviderChange() {
   const info = BUILTIN_PROVIDERS[name];
   const saved = providerConfigs[name] || {};
 
-  // API key
   const apiKeyGroup = document.getElementById("apiKeyGroup");
   if (info?.noKey) {
     apiKeyGroup.classList.add("hidden");
@@ -161,22 +146,17 @@ function onProviderChange() {
     document.getElementById("apiKey").value = saved.apiKey || "";
   }
 
-  // Key hint
   const hint = document.getElementById("keyHint");
+  hint.textContent = "";
   if (info?.keyUrl) {
-    hint.textContent = "";
-    const text = document.createTextNode("Get a key at ");
+    hint.appendChild(document.createTextNode("Get a key at "));
     const link = document.createElement("a");
     link.href = info.keyUrl;
     link.target = "_blank";
     link.textContent = new URL(info.keyUrl).hostname;
-    hint.appendChild(text);
     hint.appendChild(link);
-  } else {
-    hint.textContent = "";
   }
 
-  // Model dropdown — show saved model if any
   const modelSelect = document.getElementById("modelSelect");
   if (saved.model) {
     modelSelect.innerHTML = "";
@@ -243,7 +223,6 @@ async function fetchAndSelectModel(name) {
     throw new Error("No models found for this provider.");
   }
 
-  // Keep the previously saved model if it's still available, then try provider default, then first
   const defaultModel = info?.defaultModel;
   const selectedModel =
     (saved.model && allModels.includes(saved.model) && saved.model) ||
@@ -256,20 +235,20 @@ async function fetchAndSelectModel(name) {
   return selectedModel;
 }
 
-// --- Tag management ---
+// --- Folder management ---
 
-function renderTags() {
-  const list = document.getElementById("tagList");
+function renderFolders() {
+  const list = document.getElementById("folderList");
   list.replaceChildren();
-  for (const tag of currentTags) {
+  for (const folder of currentFolders) {
     const li = document.createElement("li");
     const span = document.createElement("span");
     span.className = "tag-name";
-    span.textContent = tag;
+    span.textContent = folder;
     const btn = document.createElement("button");
     btn.className = "danger";
     btn.textContent = "Remove";
-    btn.addEventListener("click", () => removeTag(tag));
+    btn.addEventListener("click", () => removeFolder(folder));
     li.appendChild(span);
     li.appendChild(btn);
     list.appendChild(li);
@@ -281,22 +260,28 @@ function switchToCustom() {
   document.getElementById("modeSelect").value = "custom";
 }
 
-function removeTag(tag) {
-  switchToCustom();
-  currentTags = currentTags.filter((t) => t !== tag);
-  renderTags();
-  saveTags();
+function normalizeFolderInput(raw) {
+  const cleaned = raw.trim().replace(/[^A-Za-z0-9-]/g, "").slice(0, 30);
+  if (!cleaned) return "";
+  return cleaned[0].toUpperCase() + cleaned.slice(1).toLowerCase();
 }
 
-function addTag() {
-  const input = document.getElementById("newTag");
-  const tag = input.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  if (!tag) return;
-  if (currentTags.includes(tag)) return;
+function removeFolder(folder) {
   switchToCustom();
-  currentTags = [...currentTags, tag];
-  renderTags();
-  saveTags();
+  currentFolders = currentFolders.filter((f) => f !== folder);
+  renderFolders();
+  saveFolders();
+}
+
+function addFolder() {
+  const input = document.getElementById("newFolder");
+  const folder = normalizeFolderInput(input.value);
+  if (!folder) return;
+  if (currentFolders.includes(folder)) return;
+  switchToCustom();
+  currentFolders = [...currentFolders, folder];
+  renderFolders();
+  saveFolders();
   input.value = "";
 }
 
@@ -319,7 +304,6 @@ document.getElementById("save").addEventListener("click", async () => {
     return;
   }
 
-  // Check consent before allowing provider setup
   const { dataConsentGiven } = await messenger.storage.local.get({ dataConsentGiven: false });
   if (!dataConsentGiven) {
     showStatus("Please review and accept the data consent first.", false);
@@ -336,7 +320,6 @@ document.getElementById("save").addEventListener("click", async () => {
       baseUrl: info.baseUrl || "",
     };
 
-    // Temporarily store so fetchAndSelectModel can read it
     providerConfigs = { ...providerConfigs, [name]: config };
 
     const model = await fetchAndSelectModel(name);
@@ -389,32 +372,29 @@ document.getElementById("modelFilter").addEventListener("input", () => {
   renderModelList(query, current);
 });
 
-document.getElementById("addTag").addEventListener("click", addTag);
+document.getElementById("addFolder").addEventListener("click", addFolder);
 
-document.getElementById("newTag").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") addTag();
+document.getElementById("newFolder").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") addFolder();
 });
 
 document.getElementById("modeSelect").addEventListener("change", () => {
   const mode = document.getElementById("modeSelect").value;
   currentMode = mode;
-  if (PRESETS[mode]) {
-    currentTags = [...PRESETS[mode].tags];
-    renderTags();
-    saveTags();
+  if (FOLDER_PRESETS[mode]) {
+    currentFolders = [...FOLDER_PRESETS[mode].folders];
+    renderFolders();
+    saveFolders();
   } else {
-    saveTags();
+    saveFolders();
   }
-  // Re-render priority list if folder routing is active
-  if (folderRoutingEnabled) renderPriorityList();
-  saveFolderRouting();
 });
 
-document.getElementById("resetTags").addEventListener("click", () => {
-  const preset = PRESETS[currentMode];
-  currentTags = preset ? [...preset.tags] : [...DEFAULT_TAGS];
-  renderTags();
-  saveTags();
+document.getElementById("resetFolders").addEventListener("click", () => {
+  const preset = FOLDER_PRESETS[currentMode];
+  currentFolders = preset ? [...preset.folders] : [...DEFAULT_FOLDERS];
+  renderFolders();
+  saveFolders();
 });
 
 document.getElementById("reviewConsent").addEventListener("click", () => {
@@ -424,7 +404,7 @@ document.getElementById("reviewConsent").addEventListener("click", () => {
 // --- Analyze Inbox ---
 
 let cachedSamples = [];
-let suggestedTags = [];
+let suggestedFolders = [];
 let analyzeInProgress = false;
 
 function showAnalyzeStatus(message, ok) {
@@ -433,31 +413,31 @@ function showAnalyzeStatus(message, ok) {
   el.className = ok ? "status ok" : "status err";
 }
 
-function renderSuggestions(tags) {
-  suggestedTags = tags.map((t) => ({ name: t, accepted: true }));
+function renderSuggestions(folders) {
+  suggestedFolders = folders.map((f) => ({ name: f, accepted: true }));
   const container = document.getElementById("suggestedTags");
   container.replaceChildren();
 
-  if (tags.length === 0) {
+  if (folders.length === 0) {
     container.textContent = "No suggestions found.";
     return;
   }
 
   const label = document.createElement("p");
   label.className = "hint";
-  label.textContent = "Click a tag to toggle it. Then apply the ones you want.";
+  label.textContent = "Click a folder to toggle it. Then apply the ones you want.";
   container.appendChild(label);
 
   const chips = document.createElement("div");
-  for (const tag of suggestedTags) {
+  for (const item of suggestedFolders) {
     const chip = document.createElement("span");
     chip.className = "suggested-tag";
     chip.setAttribute("role", "button");
     chip.setAttribute("tabindex", "0");
-    chip.textContent = tag.name;
+    chip.textContent = item.name;
     const toggleChip = () => {
-      tag.accepted = !tag.accepted;
-      chip.classList.toggle("rejected", !tag.accepted);
+      item.accepted = !item.accepted;
+      chip.classList.toggle("rejected", !item.accepted);
     };
     chip.addEventListener("click", toggleChip);
     chip.addEventListener("keydown", (e) => {
@@ -473,13 +453,13 @@ function renderSuggestions(tags) {
   const applyBtn = document.createElement("button");
   applyBtn.textContent = "Apply Selected";
   applyBtn.addEventListener("click", () => {
-    const accepted = suggestedTags.filter((t) => t.accepted).map((t) => t.name);
+    const accepted = suggestedFolders.filter((t) => t.accepted).map((t) => t.name);
     if (accepted.length === 0) return;
     switchToCustom();
-    currentTags = accepted;
-    renderTags();
-    saveTags();
-    showAnalyzeStatus("Tags applied!", true);
+    currentFolders = accepted;
+    renderFolders();
+    saveFolders();
+    showAnalyzeStatus("Folders applied!", true);
   });
   actions.appendChild(applyBtn);
 
@@ -487,13 +467,13 @@ function renderSuggestions(tags) {
   mergeBtn.className = "secondary";
   mergeBtn.textContent = "Merge with Current";
   mergeBtn.addEventListener("click", () => {
-    const accepted = suggestedTags.filter((t) => t.accepted).map((t) => t.name);
+    const accepted = suggestedFolders.filter((t) => t.accepted).map((t) => t.name);
     if (accepted.length === 0) return;
     switchToCustom();
-    currentTags = [...new Set([...currentTags, ...accepted])];
-    renderTags();
-    saveTags();
-    showAnalyzeStatus("Tags merged!", true);
+    currentFolders = [...new Set([...currentFolders, ...accepted])];
+    renderFolders();
+    saveFolders();
+    showAnalyzeStatus("Folders merged!", true);
   });
   actions.appendChild(mergeBtn);
 
@@ -525,7 +505,6 @@ async function analyzeInbox() {
   showAnalyzeStatus("Fetching emails from inbox...", true);
 
   try {
-    // Get all accounts and find inbox folders
     const accounts = await messenger.accounts.list();
     const allMessages = [];
 
@@ -551,18 +530,18 @@ async function analyzeInbox() {
     cachedSamples = buildSample(allMessages, 75);
 
     const { mod, config } = await getAnalysisConfig();
-    const prompt = buildAnalysisPrompt(cachedSamples, currentMode, 10);
+    const prompt = buildAnalysisPrompt(cachedSamples, currentMode, 6);
 
-    showAnalyzeStatus("Asking AI to suggest tags...", true);
-    const response = await mod.complete(config, prompt, "Suggest tags for these emails.");
-    const tags = parseTagSuggestions(response);
+    showAnalyzeStatus("Asking AI to suggest folders...", true);
+    const response = await mod.complete(config, prompt, "Suggest folders for these emails.");
+    const folders = parseFolderSuggestions(response);
 
-    if (tags.length > 0) {
-      renderSuggestions(tags);
+    if (folders.length > 0) {
+      renderSuggestions(folders);
       document.getElementById("chatSection").classList.remove("hidden");
-      showAnalyzeStatus(`Found ${tags.length} suggested tags.`, true);
+      showAnalyzeStatus(`Found ${folders.length} suggested folders.`, true);
     } else {
-      showAnalyzeStatus(diagnoseEmptyTags(response), false);
+      showAnalyzeStatus(diagnoseEmptyFolders(response), false);
     }
   } catch (err) {
     showAnalyzeStatus(`Analysis failed: ${err.message}`, false);
@@ -580,19 +559,19 @@ document.getElementById("chatSend").addEventListener("click", async () => {
   if (!request) return;
   input.value = "";
 
-  showAnalyzeStatus("Refining tags...", true);
+  showAnalyzeStatus("Refining folders...", true);
 
   try {
     const { mod, config } = await getAnalysisConfig();
-    const prompt = buildRefinementPrompt(currentTags, request, cachedSamples);
+    const prompt = buildRefinementPrompt(currentFolders, request, cachedSamples);
     const response = await mod.complete(config, prompt, request);
-    const tags = parseTagSuggestions(response);
+    const folders = parseFolderSuggestions(response);
 
-    if (tags.length > 0) {
-      renderSuggestions(tags);
-      showAnalyzeStatus(`Refined to ${tags.length} tags.`, true);
+    if (folders.length > 0) {
+      renderSuggestions(folders);
+      showAnalyzeStatus(`Refined to ${folders.length} folders.`, true);
     } else {
-      showAnalyzeStatus(diagnoseEmptyTags(response), false);
+      showAnalyzeStatus(diagnoseEmptyFolders(response), false);
     }
   } catch (err) {
     showAnalyzeStatus(`Refinement failed: ${err.message}`, false);
@@ -601,107 +580,6 @@ document.getElementById("chatSend").addEventListener("click", async () => {
 
 document.getElementById("chatInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("chatSend").click();
-});
-
-// --- Folder Routing ---
-
-function syncTagPriority() {
-  const allTags = [...currentTags];
-  const prioritized = tagPriority.filter((t) => allTags.includes(t));
-  const remaining = allTags.filter((t) => !prioritized.includes(t));
-  tagPriority = [...prioritized, ...remaining];
-}
-
-function renderPriorityList() {
-  syncTagPriority();
-  const list = document.getElementById("priorityList");
-  list.replaceChildren();
-
-  for (const tag of tagPriority) {
-    const li = document.createElement("li");
-    li.className = "priority-item";
-    li.draggable = true;
-    li.setAttribute("tabindex", "0");
-    li.dataset.tag = tag;
-
-    const handle = document.createElement("span");
-    handle.className = "drag-handle";
-    handle.setAttribute("aria-hidden", "true");
-    handle.textContent = "\u2261";
-    li.appendChild(handle);
-
-    const name = document.createElement("span");
-    name.textContent = tag;
-    li.appendChild(name);
-
-    const folder = document.createElement("span");
-    folder.className = "folder-name";
-    folder.textContent = "\u2192 " + generateFolderName(tag, currentMode === "business" ? "business" : "home");
-    li.appendChild(folder);
-
-    // Keyboard reorder (Alt+Up / Alt+Down)
-    li.addEventListener("keydown", (e) => {
-      if (!e.altKey) return;
-      const idx = tagPriority.indexOf(tag);
-      if (e.key === "ArrowUp" && idx > 0) {
-        e.preventDefault();
-        tagPriority = [...tagPriority.slice(0, idx - 1), tag, tagPriority[idx - 1], ...tagPriority.slice(idx + 1)];
-        renderPriorityList();
-        saveFolderRouting();
-        list.children[idx - 1]?.focus();
-      } else if (e.key === "ArrowDown" && idx < tagPriority.length - 1) {
-        e.preventDefault();
-        tagPriority = [...tagPriority.slice(0, idx), tagPriority[idx + 1], tag, ...tagPriority.slice(idx + 2)];
-        renderPriorityList();
-        saveFolderRouting();
-        list.children[idx + 1]?.focus();
-      }
-    });
-    // Drag and drop
-    li.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text/plain", tag);
-      li.style.opacity = "0.5";
-    });
-    li.addEventListener("dragend", () => { li.style.opacity = "1"; });
-    li.addEventListener("dragover", (e) => { e.preventDefault(); });
-    li.addEventListener("drop", (e) => {
-      e.preventDefault();
-      const from = e.dataTransfer.getData("text/plain");
-      const to = tag;
-      if (from === to) return;
-      // Build new order: filter out dragged item, then insert at drop target position
-      const without = tagPriority.filter((t) => t !== from);
-      const dropIdx = without.indexOf(to);
-      tagPriority = [
-        ...without.slice(0, dropIdx),
-        from,
-        ...without.slice(dropIdx),
-      ];
-      renderPriorityList();
-      saveFolderRouting();
-    });
-
-    list.appendChild(li);
-  }
-}
-
-async function saveFolderRouting() {
-  const folderMapping = buildDefaultMapping(
-    currentTags,
-    currentMode === "business" ? "business" : "home",
-  );
-  await messenger.storage.local.set({
-    folderRoutingEnabled,
-    folderMapping,
-    tagPriority,
-  });
-}
-
-document.getElementById("folderRoutingEnabled").addEventListener("change", (e) => {
-  folderRoutingEnabled = e.target.checked;
-  document.getElementById("folderMappingSection").classList.toggle("hidden", !folderRoutingEnabled);
-  if (folderRoutingEnabled) renderPriorityList();
-  saveFolderRouting();
 });
 
 // Refresh consent status when storage changes (e.g., user accepts consent in another tab)

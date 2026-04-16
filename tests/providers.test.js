@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import { describe, it, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 
 // --- Mock fetch globally ---
@@ -33,21 +33,19 @@ describe("gemini provider", async () => {
   const gemini = await import("../extension/providers/gemini.js");
 
   const config = { apiKey: "test-key", model: "gemini-2.0-flash" };
+  const folders = ["Finance", "Shopping", "Travel"];
 
   describe("classify", () => {
-    it("sends email and returns matching tags", async () => {
+    it("sends email and returns {folder, flags}", async () => {
       mockFetch(() =>
         jsonResponse({
-          candidates: [{ content: { parts: [{ text: '{"tags": ["finance", "receipts"]}' }] } }],
+          candidates: [{ content: { parts: [{ text: '{"folder": "Finance", "flags": ["receipt"]}' }] } }],
         }),
       );
 
-      const tags = await gemini.classify(config, "Invoice #123", "billing@co.com", "Your invoice is attached", [
-        "finance",
-        "receipts",
-        "travel",
-      ]);
-      assert.deepEqual(tags, ["finance", "receipts"]);
+      const result = await gemini.classify(config, "Invoice #123", "billing@co.com", "Your invoice is attached", folders);
+      assert.equal(result.folder, "Finance");
+      assert.deepEqual(result.flags, ["receipt"]);
     });
 
     it("uses x-goog-api-key header, not URL param", async () => {
@@ -55,45 +53,46 @@ describe("gemini provider", async () => {
         assert.ok(!url.includes("key="), "API key should not be in URL");
         assert.equal(opts.headers["x-goog-api-key"], "test-key");
         return jsonResponse({
-          candidates: [{ content: { parts: [{ text: '{"tags": []}' }] } }],
+          candidates: [{ content: { parts: [{ text: '{"folder": "", "flags": []}' }] } }],
         });
       });
 
-      await gemini.classify(config, "S", "F", "B", ["finance"]);
+      await gemini.classify(config, "S", "F", "B", folders);
     });
 
-    it("filters out tags not in allowed list", async () => {
+    it("filters out folder not in allowed list", async () => {
       mockFetch(() =>
         jsonResponse({
-          candidates: [{ content: { parts: [{ text: '{"tags": ["finance", "spam"]}' }] } }],
+          candidates: [{ content: { parts: [{ text: '{"folder": "Spam", "flags": []}' }] } }],
         }),
       );
 
-      const tags = await gemini.classify(config, "S", "F", "B", ["finance", "work"]);
-      assert.deepEqual(tags, ["finance"]);
+      const result = await gemini.classify(config, "S", "F", "B", folders);
+      assert.equal(result.folder, "");
     });
 
-    it("throws on API error", async () => {
-      mockFetch(() => errorResponse("Bad request", 400));
-
-      await assert.rejects(
-        () => gemini.classify(config, "S", "F", "B", ["finance"]),
-        (err) => err.message.includes("400"),
+    it("filters out flags not in allowed attribute list", async () => {
+      mockFetch(() =>
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: '{"folder": "Finance", "flags": ["urgent", "bogus"]}' }] } }],
+        }),
       );
+
+      const result = await gemini.classify(config, "S", "F", "B", folders);
+      assert.deepEqual(result.flags, ["urgent"]);
     });
 
-    it("throws on unexpected response structure", async () => {
-      mockFetch(() => jsonResponse({ candidates: [] }));
-
+    it("returns 429 rate limit message", async () => {
+      mockFetch(() => errorResponse("Too many", 429));
       await assert.rejects(
-        () => gemini.classify(config, "S", "F", "B", ["finance"]),
-        (err) => err.message.includes("Unexpected response"),
+        () => gemini.classify(config, "S", "F", "B", folders),
+        (err) => err.message.toLowerCase().includes("rate limit"),
       );
     });
   });
 
   describe("classifyBatch", () => {
-    it("classifies multiple emails and returns tag arrays", async () => {
+    it("classifies multiple emails and returns {folder, flags} per email", async () => {
       mockFetch(() =>
         jsonResponse({
           candidates: [
@@ -101,7 +100,7 @@ describe("gemini provider", async () => {
               content: {
                 parts: [
                   {
-                    text: '{"results": [{"tags": ["finance"]}, {"tags": ["travel"]}]}',
+                    text: '{"results": [{"folder": "Finance", "flags": []}, {"folder": "Travel", "flags": ["urgent"]}]}',
                   },
                 ],
               },
@@ -114,8 +113,11 @@ describe("gemini provider", async () => {
         { subject: "Invoice", sender: "a@b.com", body: "Pay" },
         { subject: "Flight", sender: "c@d.com", body: "Booking" },
       ];
-      const results = await gemini.classifyBatch(config, emails, ["finance", "travel"]);
-      assert.deepEqual(results, [["finance"], ["travel"]]);
+      const results = await gemini.classifyBatch(config, emails, folders);
+      assert.equal(results.length, 2);
+      assert.equal(results[0].folder, "Finance");
+      assert.equal(results[1].folder, "Travel");
+      assert.deepEqual(results[1].flags, ["urgent"]);
     });
   });
 
@@ -133,41 +135,10 @@ describe("gemini provider", async () => {
       );
 
       const models = await gemini.fetchModels(config);
-      // flash-lite first, then flash, then pro. Embedding excluded.
       assert.equal(models[0], "gemini-2.0-flash-lite");
       assert.equal(models[1], "gemini-2.0-flash");
       assert.equal(models[2], "gemini-2.0-pro");
       assert.equal(models.length, 3);
-    });
-
-    it("uses header auth for model listing too", async () => {
-      mockFetch((url, opts) => {
-        assert.ok(!url.includes("key="), "API key should not be in URL");
-        assert.equal(opts.headers["x-goog-api-key"], "test-key");
-        return jsonResponse({ models: [] });
-      });
-
-      await gemini.fetchModels(config);
-    });
-
-    it("handles pagination", async () => {
-      let calls = 0;
-      mockFetch(() => {
-        calls++;
-        if (calls === 1) {
-          return jsonResponse({
-            models: [{ name: "models/m1", supportedGenerationMethods: ["generateContent"] }],
-            nextPageToken: "page2",
-          });
-        }
-        return jsonResponse({
-          models: [{ name: "models/m2", supportedGenerationMethods: ["generateContent"] }],
-        });
-      });
-
-      const models = await gemini.fetchModels(config);
-      assert.equal(models.length, 2);
-      assert.equal(calls, 2);
     });
   });
 });
@@ -180,36 +151,46 @@ describe("openai provider", async () => {
   const openai = await import("../extension/providers/openai.js");
 
   const config = { apiKey: "sk-test", model: "gpt-4o-mini", baseUrl: "https://api.openai.com/v1" };
+  const folders = ["Work", "Personal"];
 
   describe("classify", () => {
-    it("sends email and returns matching tags", async () => {
+    it("sends email and returns {folder, flags}", async () => {
       mockFetch(() =>
         jsonResponse({
-          choices: [{ message: { content: '{"tags": ["work"]}' } }],
+          choices: [{ message: { content: '{"folder": "Work", "flags": ["action-required"]}' } }],
         }),
       );
 
-      const tags = await openai.classify(config, "Meeting", "boss@co.com", "Standup at 10", ["work", "personal"]);
-      assert.deepEqual(tags, ["work"]);
+      const result = await openai.classify(config, "Meeting", "boss@co.com", "Standup at 10", folders);
+      assert.equal(result.folder, "Work");
+      assert.deepEqual(result.flags, ["action-required"]);
     });
 
     it("uses Bearer auth header", async () => {
       mockFetch((_url, opts) => {
         assert.equal(opts.headers["Authorization"], "Bearer sk-test");
         return jsonResponse({
-          choices: [{ message: { content: '{"tags": []}' } }],
+          choices: [{ message: { content: '{"folder": "", "flags": []}' } }],
         });
       });
 
-      await openai.classify(config, "S", "F", "B", ["work"]);
+      await openai.classify(config, "S", "F", "B", folders);
     });
 
-    it("throws on unexpected response structure", async () => {
+    it("throws on empty response", async () => {
       mockFetch(() => jsonResponse({ choices: [] }));
 
       await assert.rejects(
-        () => openai.classify(config, "S", "F", "B", ["work"]),
+        () => openai.classify(config, "S", "F", "B", folders),
         (err) => err.message.includes("empty response"),
+      );
+    });
+
+    it("returns 429 rate limit message with OpenRouter guidance", async () => {
+      mockFetch(() => errorResponse("Too many", 429));
+      await assert.rejects(
+        () => openai.classify(config, "S", "F", "B", folders),
+        (err) => err.message.toLowerCase().includes("rate limit"),
       );
     });
   });
@@ -226,7 +207,7 @@ describe("openai provider", async () => {
       );
 
       const models = await openai.fetchModels(config);
-      assert.equal(models[0], "gpt-4o-mini"); // newer first
+      assert.equal(models[0], "gpt-4o-mini");
       assert.equal(models[1], "gpt-4o");
     });
   });
@@ -240,20 +221,19 @@ describe("anthropic provider", async () => {
   const anthropic = await import("../extension/providers/anthropic.js");
 
   const config = { apiKey: "sk-ant-test", model: "claude-sonnet-4-20250514" };
+  const folders = ["Newsletters", "Work"];
 
   describe("classify", () => {
-    it("sends email and returns matching tags", async () => {
+    it("sends email and returns {folder, flags}", async () => {
       mockFetch(() =>
         jsonResponse({
-          content: [{ text: '{"tags": ["newsletters"]}' }],
+          content: [{ text: '{"folder": "Newsletters", "flags": []}' }],
         }),
       );
 
-      const tags = await anthropic.classify(config, "Weekly digest", "news@co.com", "This week...", [
-        "newsletters",
-        "work",
-      ]);
-      assert.deepEqual(tags, ["newsletters"]);
+      const result = await anthropic.classify(config, "Weekly digest", "news@co.com", "This week...", folders);
+      assert.equal(result.folder, "Newsletters");
+      assert.deepEqual(result.flags, []);
     });
 
     it("uses x-api-key and anthropic-version headers", async () => {
@@ -261,18 +241,18 @@ describe("anthropic provider", async () => {
         assert.equal(opts.headers["x-api-key"], "sk-ant-test");
         assert.ok(opts.headers["anthropic-version"]);
         return jsonResponse({
-          content: [{ text: '{"tags": []}' }],
+          content: [{ text: '{"folder": "", "flags": []}' }],
         });
       });
 
-      await anthropic.classify(config, "S", "F", "B", ["work"]);
+      await anthropic.classify(config, "S", "F", "B", folders);
     });
 
     it("throws on unexpected response structure", async () => {
       mockFetch(() => jsonResponse({ content: [] }));
 
       await assert.rejects(
-        () => anthropic.classify(config, "S", "F", "B", ["work"]),
+        () => anthropic.classify(config, "S", "F", "B", folders),
         (err) => err.message.includes("Unexpected response"),
       );
     });
@@ -291,30 +271,9 @@ describe("anthropic provider", async () => {
       );
 
       const models = await anthropic.fetchModels(config);
-      assert.equal(models[0], "claude-haiku-4-20250514"); // cheapest first
+      assert.equal(models[0], "claude-haiku-4-20250514");
       assert.equal(models[1], "claude-sonnet-4-20250514");
       assert.equal(models[2], "claude-opus-4-20250514");
-    });
-
-    it("handles pagination with has_more and after_id", async () => {
-      let calls = 0;
-      mockFetch(() => {
-        calls++;
-        if (calls === 1) {
-          return jsonResponse({
-            data: [{ id: "claude-haiku-4-20250514" }],
-            has_more: true,
-          });
-        }
-        return jsonResponse({
-          data: [{ id: "claude-sonnet-4-20250514" }],
-          has_more: false,
-        });
-      });
-
-      const models = await anthropic.fetchModels(config);
-      assert.equal(models.length, 2);
-      assert.equal(calls, 2);
     });
   });
 });

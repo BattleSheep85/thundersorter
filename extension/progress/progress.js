@@ -16,14 +16,15 @@ messenger.runtime.onMessage.addListener((msg) => {
     const pct = msg.total > 0 ? Math.round((msg.processed / msg.total) * 100) : 0;
     document.getElementById("progressFill").style.width = `${pct}%`;
     document.getElementById("stats").textContent =
-      `${msg.processed} of ${msg.total} — ${msg.tagged} tagged`;
+      `${msg.processed} of ${msg.total} — ${msg.tagged} sorted`;
     if (msg.currentSubject) {
       document.getElementById("currentSubject").textContent = msg.currentSubject;
     }
     const tierLabels = {
       "headers": "Detected from headers",
       "sender-cache": "Recognized sender",
-      "llm": "AI classified",
+      "llm": "AI sorted",
+      "security-filter": "Security filter (no AI)",
     };
     document.getElementById("tierInfo").textContent =
       msg.tier ? tierLabels[msg.tier] || "" : "";
@@ -39,11 +40,11 @@ messenger.runtime.onMessage.addListener((msg) => {
     const summary = document.getElementById("doneSummary");
     if (msg.cancelled) {
       summary.textContent =
-        `Cancelled. Tagged ${msg.tagged} of ${msg.total} emails.`;
+        `Cancelled. Sorted ${msg.tagged} of ${msg.total} emails.`;
       summary.classList.add("cancelled");
     } else {
       summary.textContent =
-        `Complete. Tagged ${msg.tagged} of ${msg.total} emails.`;
+        `Complete. Sorted ${msg.tagged} of ${msg.total} emails.`;
     }
     summary.classList.add("visible");
   }

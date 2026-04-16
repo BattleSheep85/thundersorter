@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import {
   buildSample,
   buildAnalysisPrompt,
-  parseTagSuggestions,
+  parseFolderSuggestions,
   buildRefinementPrompt,
-  diagnoseEmptyTags,
+  diagnoseEmptyFolders,
 } from "../extension/analyzer.js";
 
 // --- buildSample ---
@@ -39,32 +39,16 @@ describe("buildSample", () => {
     assert.ok(result.length <= 75);
   });
 
-  it("includes messages from different domains", () => {
+  it("excludes security-sensitive emails from samples", () => {
     const messages = [
-      ...Array.from({ length: 50 }, (_, i) => ({
-        author: `user${i}@gmail.com`,
-        subject: `Gmail ${i}`,
-        date: new Date(2024, 0, i + 1).toISOString(),
-      })),
-      ...Array.from({ length: 5 }, (_, i) => ({
-        author: `user${i}@raredomain.com`,
-        subject: `Rare ${i}`,
-        date: new Date(2024, 0, i + 1).toISOString(),
-      })),
-    ];
-    const result = buildSample(messages, 20);
-    const senders = result.map((s) => s.sender);
-    const hasRare = senders.some((s) => s.includes("raredomain.com"));
-    assert.ok(hasRare, "should include messages from rare domains");
-  });
-
-  it("handles messages without dates", () => {
-    const messages = [
-      { author: "alice@test.com", subject: "No date" },
-      { author: "bob@test.com", subject: "Also no date" },
+      { author: "noreply@shop.com", subject: "Your verification code", date: "2024-01-01" },
+      { author: "billing@shop.com", subject: "Invoice #100", date: "2024-01-02" },
+      { author: "security@bank.com", subject: "Password Reset Request", date: "2024-01-03" },
     ];
     const result = buildSample(messages, 10);
-    assert.ok(result.length > 0);
+    const subjects = result.map((s) => s.subject);
+    assert.ok(subjects.includes("Invoice #100"));
+    assert.ok(!subjects.some((s) => /verification|password/i.test(s)));
   });
 
   it("handles messages without author", () => {
@@ -86,7 +70,7 @@ describe("buildAnalysisPrompt", () => {
   ];
 
   it("includes all sample subjects", () => {
-    const prompt = buildAnalysisPrompt(samples, "home", 10);
+    const prompt = buildAnalysisPrompt(samples, "home", 6);
     assert.ok(prompt.includes("Invoice #123"));
     assert.ok(prompt.includes("Weekly Newsletter"));
   });
@@ -97,10 +81,10 @@ describe("buildAnalysisPrompt", () => {
     assert.ok(prompt.includes("news@blog.com"));
   });
 
-  it("requests JSON response format", () => {
+  it("requests JSON response with folders key", () => {
     const prompt = buildAnalysisPrompt(samples, "home");
     assert.ok(prompt.includes("JSON"));
-    assert.ok(prompt.includes('"tags"'));
+    assert.ok(prompt.includes('"folders"'));
   });
 
   it("mentions business context for business preset", () => {
@@ -108,164 +92,142 @@ describe("buildAnalysisPrompt", () => {
     assert.ok(prompt.toLowerCase().includes("work") || prompt.toLowerCase().includes("business"));
   });
 
-  it("mentions minimal for minimal preset", () => {
-    const prompt = buildAnalysisPrompt(samples, "minimal");
-    assert.ok(prompt.toLowerCase().includes("few") || prompt.toLowerCase().includes("broad"));
-  });
-
   it("includes target count", () => {
-    const prompt = buildAnalysisPrompt(samples, "home", 8);
-    assert.ok(prompt.includes("8"));
+    const prompt = buildAnalysisPrompt(samples, "home", 5);
+    assert.ok(prompt.includes("5"));
   });
 
-  it("enforces single/double word tag rule", () => {
+  it("requires Notifications folder and capitalized names", () => {
     const prompt = buildAnalysisPrompt(samples, "home");
-    assert.ok(prompt.includes("ONE word") || prompt.includes("one word") || prompt.includes("two words"));
+    assert.ok(prompt.includes("Notifications"));
+    assert.ok(prompt.toLowerCase().includes("capitalized"));
   });
 });
 
-// --- parseTagSuggestions ---
+// --- parseFolderSuggestions ---
 
-describe("parseTagSuggestions", () => {
-  it("parses valid JSON with tags array", () => {
+describe("parseFolderSuggestions", () => {
+  it("parses valid JSON with folders array", () => {
     assert.deepEqual(
-      parseTagSuggestions('{"tags": ["finance", "newsletters"]}'),
-      ["finance", "newsletters"],
+      parseFolderSuggestions('{"folders": ["Finance", "Newsletters"]}'),
+      ["Finance", "Newsletters"],
     );
   });
 
   it("strips markdown code fences", () => {
     assert.deepEqual(
-      parseTagSuggestions('```json\n{"tags": ["work"]}\n```'),
-      ["work"],
+      parseFolderSuggestions('```json\n{"folders": ["Work"]}\n```'),
+      ["Work"],
     );
   });
 
-  it("handles suggestions key", () => {
+  it("accepts tags / suggestions / categories as aliases", () => {
+    assert.deepEqual(parseFolderSuggestions('{"tags": ["Travel"]}'), ["Travel"]);
+    assert.deepEqual(parseFolderSuggestions('{"suggestions": ["Health"]}'), ["Health"]);
+    assert.deepEqual(parseFolderSuggestions('{"categories": ["Family"]}'), ["Family"]);
+  });
+
+  it("titlecases folder names", () => {
     assert.deepEqual(
-      parseTagSuggestions('{"suggestions": ["travel", "social"]}'),
-      ["travel", "social"],
+      parseFolderSuggestions('{"folders": ["finance", "WORK"]}'),
+      ["Finance", "Work"],
     );
   });
 
-  it("handles categories key", () => {
+  it("strips invalid characters but keeps dashes", () => {
     assert.deepEqual(
-      parseTagSuggestions('{"categories": ["health"]}'),
-      ["health"],
-    );
-  });
-
-  it("normalizes to lowercase", () => {
-    assert.deepEqual(
-      parseTagSuggestions('{"tags": ["Finance", "WORK"]}'),
-      ["finance", "work"],
-    );
-  });
-
-  it("strips invalid characters", () => {
-    assert.deepEqual(
-      parseTagSuggestions('{"tags": ["fin@nce!", "wo rk"]}'),
-      ["finnce", "work"],
+      parseFolderSuggestions('{"folders": ["Fin@nce!", "Follow-up"]}'),
+      ["Finnce", "Follow-up"],
     );
   });
 
   it("filters out empty strings", () => {
     assert.deepEqual(
-      parseTagSuggestions('{"tags": ["finance", "", "  "]}'),
-      ["finance"],
+      parseFolderSuggestions('{"folders": ["Finance", "", "  "]}'),
+      ["Finance"],
     );
   });
 
-  it("filters out very long strings", () => {
-    const longTag = "a".repeat(50);
-    assert.deepEqual(
-      parseTagSuggestions(`{"tags": ["finance", "${longTag}"]}`),
-      ["finance"],
-    );
+  it("truncates very long folder names to 30 chars", () => {
+    const longName = "A".repeat(50);
+    const result = parseFolderSuggestions(`{"folders": ["${longName}"]}`);
+    assert.equal(result[0].length, 30);
   });
 
   it("returns empty array for invalid input", () => {
-    assert.deepEqual(parseTagSuggestions("not json at all"), []);
+    assert.deepEqual(parseFolderSuggestions("not json at all"), []);
   });
 
   it("extracts JSON from surrounding text", () => {
     assert.deepEqual(
-      parseTagSuggestions('Here are my suggestions: {"tags": ["finance"]} Hope this helps!'),
-      ["finance"],
+      parseFolderSuggestions('Here you go: {"folders": ["Finance"]} Hope this helps!'),
+      ["Finance"],
     );
   });
 });
 
-// --- diagnoseEmptyTags ---
+// --- diagnoseEmptyFolders ---
 
-describe("diagnoseEmptyTags", () => {
+describe("diagnoseEmptyFolders", () => {
   it("flags an empty response", () => {
-    assert.match(diagnoseEmptyTags(""), /empty response/);
-    assert.match(diagnoseEmptyTags("   "), /empty response/);
+    assert.match(diagnoseEmptyFolders(""), /empty response/);
+    assert.match(diagnoseEmptyFolders("   "), /empty response/);
   });
 
   it("flags non-JSON responses with a preview", () => {
-    const reason = diagnoseEmptyTags("I cannot help with that.");
+    const reason = diagnoseEmptyFolders("I cannot help with that.");
     assert.match(reason, /didn't return JSON/);
     assert.match(reason, /I cannot help/);
   });
 
-  it("flags JSON missing a tags field", () => {
-    const reason = diagnoseEmptyTags('{"foo": 1, "bar": 2}');
-    assert.match(reason, /no "tags" field/);
+  it("flags JSON missing a folders field", () => {
+    const reason = diagnoseEmptyFolders('{"foo": 1, "bar": 2}');
+    assert.match(reason, /no "folders" field/);
     assert.match(reason, /foo/);
   });
 
-  it("flags an empty tag list", () => {
-    assert.match(diagnoseEmptyTags('{"tags": []}'), /empty tag list/);
+  it("flags an empty folder list", () => {
+    assert.match(diagnoseEmptyFolders('{"folders": []}'), /empty folder list/);
   });
 
-  it("flags tags-not-a-list", () => {
-    assert.match(diagnoseEmptyTags('{"tags": "finance"}'), /wasn't a list/);
-  });
-
-  it("flags all-invalid tags", () => {
-    assert.match(diagnoseEmptyTags('{"tags": ["", "  "]}'), /all invalid/);
-  });
-
-  it("strips markdown fences before parsing", () => {
-    assert.match(diagnoseEmptyTags('```json\n{"tags": []}\n```'), /empty tag list/);
+  it("flags folders-not-a-list", () => {
+    assert.match(diagnoseEmptyFolders('{"folders": "Finance"}'), /wasn't a list/);
   });
 });
 
 // --- buildRefinementPrompt ---
 
 describe("buildRefinementPrompt", () => {
-  const currentTags = ["finance", "newsletters"];
+  const currentFolders = ["Finance", "Newsletters"];
   const samples = [
     { subject: "Invoice", sender: "billing@shop.com" },
   ];
 
-  it("includes current tags", () => {
-    const prompt = buildRefinementPrompt(currentTags, "add a health tag", samples);
-    assert.ok(prompt.includes("finance"));
-    assert.ok(prompt.includes("newsletters"));
+  it("includes current folders", () => {
+    const prompt = buildRefinementPrompt(currentFolders, "add a Health folder", samples);
+    assert.ok(prompt.includes("Finance"));
+    assert.ok(prompt.includes("Newsletters"));
   });
 
   it("includes user request", () => {
-    const prompt = buildRefinementPrompt(currentTags, "add a health tag", samples);
-    assert.ok(prompt.includes("add a health tag"));
+    const prompt = buildRefinementPrompt(currentFolders, "add a Health folder", samples);
+    assert.ok(prompt.includes("add a Health folder"));
   });
 
   it("includes sample emails", () => {
-    const prompt = buildRefinementPrompt(currentTags, "add tags", samples);
+    const prompt = buildRefinementPrompt(currentFolders, "adjust", samples);
     assert.ok(prompt.includes("Invoice"));
     assert.ok(prompt.includes("billing@shop.com"));
   });
 
-  it("requests JSON response", () => {
-    const prompt = buildRefinementPrompt(currentTags, "adjust", samples);
+  it("requests JSON response with folders key", () => {
+    const prompt = buildRefinementPrompt(currentFolders, "adjust", samples);
     assert.ok(prompt.includes("JSON"));
-    assert.ok(prompt.includes('"tags"'));
+    assert.ok(prompt.includes('"folders"'));
   });
 
-  it("asks for complete tag list", () => {
-    const prompt = buildRefinementPrompt(currentTags, "adjust", samples);
+  it("asks for complete folder list", () => {
+    const prompt = buildRefinementPrompt(currentFolders, "adjust", samples);
     assert.ok(prompt.toLowerCase().includes("complete") || prompt.toLowerCase().includes("updated"));
   });
 
@@ -274,8 +236,7 @@ describe("buildRefinementPrompt", () => {
       subject: `Email ${i}`,
       sender: `user${i}@test.com`,
     }));
-    const prompt = buildRefinementPrompt(currentTags, "adjust", manySamples);
-    // Should only include first 30
+    const prompt = buildRefinementPrompt(currentFolders, "adjust", manySamples);
     assert.ok(prompt.includes("Email 29"));
     assert.ok(!prompt.includes("Email 30"));
   });

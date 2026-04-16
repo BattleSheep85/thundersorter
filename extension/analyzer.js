@@ -54,13 +54,13 @@ export function buildSample(messages, targetSize = 75) {
 }
 
 /**
- * Build a prompt for the LLM to discover tag categories from email samples.
+ * Build a prompt for the LLM to discover FOLDER names from email samples.
  * @param {object[]} samples — from buildSample()
  * @param {string} preset — "home", "business", "minimal", or "custom"
- * @param {number} targetCount — how many tags to suggest (default 10)
+ * @param {number} targetCount — how many folders to suggest (default 6)
  * @returns {string}
  */
-export function buildAnalysisPrompt(samples, preset = "home", targetCount = 10) {
+export function buildAnalysisPrompt(samples, preset = "home", targetCount = 6) {
   const emailList = samples
     .map((s, i) => `${i + 1}. Subject: ${s.subject}\n   From: ${s.sender}`)
     .join("\n");
@@ -68,54 +68,62 @@ export function buildAnalysisPrompt(samples, preset = "home", targetCount = 10) 
   const context = preset === "business"
     ? "This is a work/business email account."
     : preset === "minimal"
-      ? "The user wants very few, broad categories."
+      ? "The user wants very few, broad folders."
       : "This is a personal/home email account.";
 
-  return `You are an email organization expert. Analyze these email subjects and senders to suggest ${targetCount} tag categories for automatic classification.
+  return `You are an email organization expert. Based on these email subjects and senders, suggest ${targetCount} folder names the user should create to organize their inbox.
 
 ${context}
 
 Rules:
-- Each tag must be ONE word (two words max, like "action-required")
-- Tags must be broad categories, not specific senders or topics
-- Tags should cover the majority of these emails
-- Suggest tags in order of usefulness (most useful first)
+- Every folder name is ONE word, capitalized (e.g., "Finance", "Shopping", "Travel").
+- Folders are mutually exclusive buckets — every email belongs to exactly ONE of them.
+- Each folder should cover a meaningful slice of the inbox (at least 5% of emails).
+- Always include "Notifications" for automated, low-value emails.
+- Always include "Newsletters" if any bulk/marketing mail is present.
+- Order folders most-used first.
 
 Here are sample emails from the inbox:
 ${emailList}
 
-Respond with ONLY a JSON object: {"tags": ["tag1", "tag2", ...]}`;
+Respond with ONLY a JSON object: {"folders": ["Folder1", "Folder2", ...]}`;
 }
 
 /**
- * Parse tag suggestions from an LLM response.
- * @param {string} llmResponse — raw LLM output
+ * Normalize a folder name to "Titlecase", safe for filesystem use.
+ * Strips anything non-alphanumeric/-, collapses dashes, caps at 30 chars.
+ */
+function normalizeFolderName(raw) {
+  if (typeof raw !== "string") return "";
+  const cleaned = raw.trim().replace(/[^A-Za-z0-9-]/g, "").slice(0, 30);
+  if (!cleaned) return "";
+  return cleaned[0].toUpperCase() + cleaned.slice(1).toLowerCase();
+}
+
+/**
+ * Parse folder suggestions from an LLM response.
+ * Accepts various key names (folders / tags / categories / suggestions) for resilience.
+ * @param {string} llmResponse
  * @returns {string[]}
  */
-export function parseTagSuggestions(llmResponse) {
-  let cleaned = llmResponse.trim();
+export function parseFolderSuggestions(llmResponse) {
+  let cleaned = (llmResponse || "").trim();
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
   }
+  const tryParse = (text) => {
+    const parsed = JSON.parse(text);
+    const list = parsed.folders || parsed.tags || parsed.suggestions || parsed.categories || [];
+    return list
+      .map(normalizeFolderName)
+      .filter((f) => f.length > 0);
+  };
   try {
-    const parsed = JSON.parse(cleaned);
-    const tags = parsed.tags || parsed.suggestions || parsed.categories || [];
-    return tags
-      .filter((t) => typeof t === "string")
-      .map((t) => t.trim().toLowerCase().replace(/[^a-z0-9-]/g, ""))
-      .filter((t) => t.length > 0 && t.length <= 30);
+    return tryParse(cleaned);
   } catch {
-    // Try extracting JSON from surrounding text (non-recursive to prevent stack overflow)
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match && match[0] !== cleaned) {
-      try {
-        const parsed = JSON.parse(match[0]);
-        const tags = parsed.tags || parsed.suggestions || parsed.categories || [];
-        return tags
-          .filter((t) => typeof t === "string")
-          .map((t) => t.trim().toLowerCase().replace(/[^a-z0-9-]/g, ""))
-          .filter((t) => t.length > 0 && t.length <= 30);
-      } catch { /* fall through */ }
+      try { return tryParse(match[0]); } catch { /* fall through */ }
     }
     return [];
   }
@@ -127,7 +135,7 @@ export function parseTagSuggestions(llmResponse) {
  * @param {string} llmResponse
  * @returns {string}
  */
-export function diagnoseEmptyTags(llmResponse) {
+export function diagnoseEmptyFolders(llmResponse) {
   const raw = (llmResponse || "").trim();
   if (raw.length === 0) return "AI returned an empty response.";
 
@@ -148,30 +156,30 @@ export function diagnoseEmptyTags(llmResponse) {
   }
 
   const parsed = JSON.parse(jsonText);
-  const list = parsed.tags ?? parsed.suggestions ?? parsed.categories;
+  const list = parsed.folders ?? parsed.tags ?? parsed.suggestions ?? parsed.categories;
   if (list === undefined) {
     const keys = Object.keys(parsed).slice(0, 3).join(", ") || "(empty)";
-    return `AI's JSON had no "tags" field. Keys: ${keys}.`;
+    return `AI's JSON had no "folders" field. Keys: ${keys}.`;
   }
-  if (!Array.isArray(list)) return `AI's "tags" wasn't a list (got ${typeof list}).`;
-  if (list.length === 0) return "AI returned an empty tag list.";
-  return "AI's tags were all invalid (empty, too long, or non-string).";
+  if (!Array.isArray(list)) return `AI's "folders" wasn't a list (got ${typeof list}).`;
+  if (list.length === 0) return "AI returned an empty folder list.";
+  return "AI's folder names were all invalid (empty or unparseable).";
 }
 
 /**
- * Build a refinement prompt for when the user wants to adjust suggestions.
- * @param {string[]} currentTags — current tag list
+ * Build a refinement prompt for when the user wants to adjust folder suggestions.
+ * @param {string[]} currentFolders
  * @param {string} userRequest — natural language request
  * @param {object[]} samples — from buildSample()
  * @returns {string}
  */
-export function buildRefinementPrompt(currentTags, userRequest, samples) {
+export function buildRefinementPrompt(currentFolders, userRequest, samples) {
   const emailList = samples
     .slice(0, 30)
     .map((s, i) => `${i + 1}. Subject: ${s.subject}\n   From: ${s.sender}`)
     .join("\n");
 
-  return `You are an email organization expert. The user has these tags: ${currentTags.join(", ")}
+  return `You are an email organization expert. The user has these folders: ${currentFolders.join(", ")}
 
 They want to change them: "${userRequest}"
 
@@ -179,9 +187,9 @@ Sample emails from their inbox:
 ${emailList}
 
 Rules:
-- Each tag must be ONE word (two words max, like "action-required")
-- Tags must be broad categories
-- Return the COMPLETE updated tag list (not just changes)
+- Each folder name is ONE word, capitalized (e.g., "Finance", "Shopping").
+- Folders are mutually exclusive buckets.
+- Return the COMPLETE updated folder list (not just changes).
 
-Respond with ONLY a JSON object: {"tags": ["tag1", "tag2", ...]}`;
+Respond with ONLY a JSON object: {"folders": ["Folder1", "Folder2", ...]}`;
 }

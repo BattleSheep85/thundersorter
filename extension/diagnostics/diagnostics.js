@@ -12,26 +12,38 @@ function renderDiagnostic(data) {
   const tierLabels = {
     "headers": "Detected from email headers",
     "sender-cache": "Recognized sender",
-    "llm": "AI classification",
-    "skipped": "Not classified",
+    "llm": "AI sort",
+    "security-filter": "Security filter (no AI)",
+    "skipped": "Not sorted",
     "error": "Error",
-    "already-tagged": "Already tagged",
+    "already-flagged": "Already flagged",
     "unknown": "Unknown",
   };
   badge.textContent = tierLabels[data.tier] || data.tier;
   content.appendChild(badge);
 
-  // Tags
-  if (data.tags && data.tags.length > 0) {
-    const tagsDiv = document.createElement("div");
-    tagsDiv.className = "tags";
-    for (const tag of data.tags) {
+  // Folder
+  if (data.folder) {
+    const folderDiv = document.createElement("div");
+    folderDiv.className = "tags";
+    const span = document.createElement("span");
+    span.className = "tag";
+    span.textContent = `Folder: ${data.folder}`;
+    folderDiv.appendChild(span);
+    content.appendChild(folderDiv);
+  }
+
+  // Flags
+  if (data.flags && data.flags.length > 0) {
+    const flagsDiv = document.createElement("div");
+    flagsDiv.className = "tags";
+    for (const flag of data.flags) {
       const span = document.createElement("span");
       span.className = "tag";
-      span.textContent = tag;
-      tagsDiv.appendChild(span);
+      span.textContent = flag;
+      flagsDiv.appendChild(span);
     }
-    content.appendChild(tagsDiv);
+    content.appendChild(flagsDiv);
   }
 
   // Reason

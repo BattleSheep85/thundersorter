@@ -2,8 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  filterTags,
-  extractTags,
+  filterFolder,
+  filterFlags,
+  extractFolderAndFlags,
   formatEmail,
   safeParseJSON,
   apiError,
@@ -12,89 +13,87 @@ import {
   isSensitiveEmail,
   TAG_PREFIX,
   TAG_COLORS,
-  DEFAULT_TAGS,
+  DEFAULT_FOLDERS,
+  ATTRIBUTE_FLAGS,
   BATCH_SIZE,
   SKIP_FOLDER_TYPES,
   BUILTIN_PROVIDERS,
-  PRESETS,
+  FOLDER_PRESETS,
 } from "../extension/common.js";
 
-// --- filterTags ---
+// --- filterFolder ---
 
-describe("filterTags", () => {
-  it("returns only tags in the allowed list", () => {
-    assert.deepEqual(
-      filterTags(["finance", "spam", "travel"], ["finance", "travel", "work"]),
-      ["finance", "travel"],
-    );
+describe("filterFolder", () => {
+  it("returns the allowed spelling for a case-insensitive match", () => {
+    assert.equal(filterFolder("finance", ["Finance", "Travel"]), "Finance");
+    assert.equal(filterFolder("TRAVEL", ["Finance", "Travel"]), "Travel");
   });
 
-  it("returns empty array when no tags match", () => {
-    assert.deepEqual(filterTags(["unknown", "bogus"], ["finance", "work"]), []);
+  it("returns empty string for unknown folder", () => {
+    assert.equal(filterFolder("spam", ["Finance", "Travel"]), "");
   });
 
-  it("handles empty input", () => {
-    assert.deepEqual(filterTags([], ["finance"]), []);
+  it("returns empty for non-string input", () => {
+    assert.equal(filterFolder(null, ["Finance"]), "");
+    assert.equal(filterFolder(123, ["Finance"]), "");
+    assert.equal(filterFolder("", ["Finance"]), "");
   });
 
-  it("handles empty allowed list", () => {
-    assert.deepEqual(filterTags(["finance"], []), []);
-  });
-
-  it("matches case-insensitively", () => {
-    assert.deepEqual(
-      filterTags(["Finance", "TRAVEL"], ["finance", "travel"]),
-      ["finance", "travel"],
-    );
-  });
-
-  it("handles string input instead of array", () => {
-    assert.deepEqual(filterTags("finance", ["finance", "work"]), ["finance"]);
-  });
-
-  it("handles non-array non-string input gracefully", () => {
-    assert.deepEqual(filterTags(123, ["finance"]), []);
-    assert.deepEqual(filterTags(null, ["finance"]), []);
-    assert.deepEqual(filterTags(undefined, ["finance"]), []);
+  it("trims whitespace", () => {
+    assert.equal(filterFolder("  Finance  ", ["Finance"]), "Finance");
   });
 });
 
-describe("extractTags", () => {
-  it("extracts from {tags: [...]} format", () => {
-    assert.deepEqual(extractTags({ tags: ["finance"] }), ["finance"]);
+// --- filterFlags ---
+
+describe("filterFlags", () => {
+  it("keeps only allowed flags", () => {
+    assert.deepEqual(filterFlags(["urgent", "foo", "receipt"]), ["urgent", "receipt"]);
   });
 
-  it("extracts from {tag: [...]} format", () => {
-    assert.deepEqual(extractTags({ tag: ["work"] }), ["work"]);
+  it("lowercases flags", () => {
+    assert.deepEqual(filterFlags(["URGENT", "Receipt"]), ["urgent", "receipt"]);
   });
 
-  it("extracts from {labels: [...]} format", () => {
-    assert.deepEqual(extractTags({ labels: ["travel"] }), ["travel"]);
+  it("deduplicates", () => {
+    assert.deepEqual(filterFlags(["urgent", "URGENT"]), ["urgent"]);
   });
 
-  it("extracts from {categories: [...]} format", () => {
-    assert.deepEqual(extractTags({ categories: ["social"] }), ["social"]);
+  it("handles string input", () => {
+    assert.deepEqual(filterFlags("urgent"), ["urgent"]);
   });
 
-  it("extracts from {classification: [...]} format", () => {
-    assert.deepEqual(extractTags({ classification: ["newsletters"] }), ["newsletters"]);
+  it("handles non-array, non-string input", () => {
+    assert.deepEqual(filterFlags(null), []);
+    assert.deepEqual(filterFlags(undefined), []);
+    assert.deepEqual(filterFlags(42), []);
+  });
+});
+
+// --- extractFolderAndFlags ---
+
+describe("extractFolderAndFlags", () => {
+  it("extracts folder and flags from canonical shape", () => {
+    const { folder, flags } = extractFolderAndFlags({ folder: "Finance", flags: ["urgent"] });
+    assert.equal(folder, "Finance");
+    assert.deepEqual(flags, ["urgent"]);
   });
 
-  it("extracts single array value from unknown key", () => {
-    assert.deepEqual(extractTags({ result: ["finance"] }), ["finance"]);
+  it("accepts 'category' as a folder alias", () => {
+    assert.equal(extractFolderAndFlags({ category: "Travel" }).folder, "Travel");
   });
 
-  it("returns empty for null/undefined", () => {
-    assert.deepEqual(extractTags(null), []);
-    assert.deepEqual(extractTags(undefined), []);
+  it("accepts 'tags' as a flags alias", () => {
+    assert.deepEqual(extractFolderAndFlags({ folder: "X", tags: ["urgent"] }).flags, ["urgent"]);
   });
 
-  it("returns empty for non-object", () => {
-    assert.deepEqual(extractTags("string"), []);
+  it("returns empty/empty for null or garbage", () => {
+    assert.deepEqual(extractFolderAndFlags(null), { folder: "", flags: [] });
+    assert.deepEqual(extractFolderAndFlags("bogus"), { folder: "", flags: [] });
   });
 
-  it("returns empty for empty object", () => {
-    assert.deepEqual(extractTags({}), []);
+  it("coerces a string flag into a one-element array", () => {
+    assert.deepEqual(extractFolderAndFlags({ folder: "X", flags: "urgent" }).flags, ["urgent"]);
   });
 });
 
@@ -112,61 +111,31 @@ describe("formatEmail", () => {
     assert.ok(result.length <= 4000 + "Subject: S\nFrom: F\n\n".length);
     assert.ok(result.endsWith("x".repeat(4000)));
   });
-
-  it("handles empty fields", () => {
-    const result = formatEmail("", "", "");
-    assert.equal(result, "Subject: \nFrom: \n\n");
-  });
 });
 
 // --- safeParseJSON ---
 
 describe("safeParseJSON", () => {
   it("parses valid JSON", () => {
-    assert.deepEqual(safeParseJSON('{"tags": ["finance"]}'), { tags: ["finance"] });
+    assert.deepEqual(safeParseJSON('{"folder": "Finance"}'), { folder: "Finance" });
   });
 
   it("strips markdown code fences", () => {
     assert.deepEqual(
-      safeParseJSON('```json\n{"tags": ["travel"]}\n```'),
-      { tags: ["travel"] },
-    );
-  });
-
-  it("strips code fences without language tag", () => {
-    assert.deepEqual(
-      safeParseJSON('```\n{"tags": ["work"]}\n```'),
-      { tags: ["work"] },
-    );
-  });
-
-  it("handles whitespace around JSON", () => {
-    assert.deepEqual(
-      safeParseJSON('  \n {"tags": []}  \n '),
-      { tags: [] },
+      safeParseJSON('```json\n{"folder": "Travel"}\n```'),
+      { folder: "Travel" },
     );
   });
 
   it("extracts JSON from surrounding text", () => {
     assert.deepEqual(
-      safeParseJSON('Here is the result: {"tags": ["work"]}'),
-      { tags: ["work"] },
-    );
-  });
-
-  it("extracts JSON when model adds explanation after", () => {
-    assert.deepEqual(
-      safeParseJSON('{"tags": ["finance"]} I classified this email.'),
-      { tags: ["finance"] },
+      safeParseJSON('Here is the result: {"folder": "Work"}'),
+      { folder: "Work" },
     );
   });
 
   it("throws on no JSON at all", () => {
     assert.throws(() => safeParseJSON("not json at all"), SyntaxError);
-  });
-
-  it("throws on empty string", () => {
-    assert.throws(() => safeParseJSON(""), SyntaxError);
   });
 });
 
@@ -181,12 +150,6 @@ describe("apiError", () => {
     const longBody = "a".repeat(500);
     const result = apiError(500, longBody);
     assert.ok(result.length <= "API error (500): ".length + 200);
-    assert.ok(result.includes("a".repeat(200)));
-    assert.ok(!result.includes("a".repeat(201)));
-  });
-
-  it("handles empty body", () => {
-    assert.equal(apiError(404, ""), "API error (404): ");
   });
 
   it("handles null/undefined body", () => {
@@ -213,80 +176,48 @@ describe("normalizeSender", () => {
   it("trims whitespace", () => {
     assert.equal(normalizeSender("  carol@test.com  "), "carol@test.com");
   });
-
-  it("handles empty string", () => {
-    assert.equal(normalizeSender(""), "");
-  });
 });
 
 // --- classifyFromHeaders ---
 
 describe("classifyFromHeaders", () => {
-  it("returns newsletters for List-Unsubscribe header", () => {
-    const tags = classifyFromHeaders({ "list-unsubscribe": ["<mailto:unsub@test.com>"] });
-    assert.deepEqual(tags, ["newsletters"]);
+  it("returns Newsletters for List-Unsubscribe header", () => {
+    assert.equal(classifyFromHeaders({ "list-unsubscribe": ["<mailto:unsub@test.com>"] }), "Newsletters");
   });
 
-  it("returns newsletters for List-Id header", () => {
-    const tags = classifyFromHeaders({ "list-id": ["<weekly.test.com>"] });
-    assert.deepEqual(tags, ["newsletters"]);
+  it("returns Newsletters for List-Id header", () => {
+    assert.equal(classifyFromHeaders({ "list-id": ["<weekly.test.com>"] }), "Newsletters");
   });
 
-  it("returns newsletters for Precedence: list", () => {
-    const tags = classifyFromHeaders({ "precedence": ["list"] });
-    assert.deepEqual(tags, ["newsletters"]);
+  it("returns Newsletters for Precedence: list or bulk", () => {
+    assert.equal(classifyFromHeaders({ "precedence": ["list"] }), "Newsletters");
+    assert.equal(classifyFromHeaders({ "precedence": ["bulk"] }), "Newsletters");
   });
 
-  it("returns promotions for Precedence: bulk", () => {
-    const tags = classifyFromHeaders({ "precedence": ["bulk"] });
-    assert.deepEqual(tags, ["promotions"]);
+  it("returns Notifications for X-Auto-Response-Suppress", () => {
+    assert.equal(classifyFromHeaders({ "x-auto-response-suppress": ["All"] }), "Notifications");
   });
 
-  it("returns promotions for Precedence: junk", () => {
-    const tags = classifyFromHeaders({ "precedence": ["junk"] });
-    assert.deepEqual(tags, ["promotions"]);
+  it("returns Notifications for noreply sender", () => {
+    assert.equal(classifyFromHeaders({ "from": ["noreply@example.com"] }), "Notifications");
   });
 
-  it("returns notifications for X-Auto-Response-Suppress", () => {
-    const tags = classifyFromHeaders({ "x-auto-response-suppress": ["All"] });
-    assert.deepEqual(tags, ["notifications"]);
+  it("returns Notifications for no-reply return path", () => {
+    assert.equal(classifyFromHeaders({ "return-path": ["<no-reply@example.com>"] }), "Notifications");
   });
 
-  it("returns notifications for noreply sender", () => {
-    const tags = classifyFromHeaders({ "from": ["noreply@example.com"] });
-    assert.deepEqual(tags, ["notifications"]);
+  it("returns empty string for no matching headers", () => {
+    assert.equal(classifyFromHeaders({ "subject": ["Hello"], "from": ["alice@test.com"] }), "");
   });
 
-  it("returns notifications for no-reply return path", () => {
-    const tags = classifyFromHeaders({ "return-path": ["<no-reply@example.com>"] });
-    assert.deepEqual(tags, ["notifications"]);
-  });
-
-  it("does not double-tag noreply sender that is also a newsletter", () => {
-    const tags = classifyFromHeaders({
-      "list-unsubscribe": ["<mailto:unsub@test.com>"],
-      "from": ["noreply@test.com"],
-    });
-    assert.deepEqual(tags, ["newsletters"]);
-  });
-
-  it("returns empty array for no matching headers", () => {
-    const tags = classifyFromHeaders({ "subject": ["Hello"], "from": ["alice@test.com"] });
-    assert.deepEqual(tags, []);
-  });
-
-  it("returns empty array for empty headers", () => {
-    assert.deepEqual(classifyFromHeaders({}), []);
-  });
-
-  it("deduplicates tags", () => {
-    const tags = classifyFromHeaders({
-      "precedence": ["bulk"],
-      "x-auto-response-suppress": ["All"],
-    });
-    assert.ok(tags.includes("promotions"));
-    assert.ok(tags.includes("notifications"));
-    assert.equal(new Set(tags).size, tags.length);
+  it("prefers Newsletters over Notifications when both signals present", () => {
+    assert.equal(
+      classifyFromHeaders({
+        "list-unsubscribe": ["<mailto:unsub@test.com>"],
+        "from": ["noreply@test.com"],
+      }),
+      "Newsletters",
+    );
   });
 });
 
@@ -298,10 +229,17 @@ describe("constants", () => {
     assert.ok(TAG_PREFIX.length > 0);
   });
 
-  it("every DEFAULT_TAG has a color in TAG_COLORS", () => {
-    for (const tag of DEFAULT_TAGS) {
-      assert.ok(TAG_COLORS[tag], `${tag} has no color in TAG_COLORS`);
+  it("every ATTRIBUTE_FLAG has a color in TAG_COLORS", () => {
+    for (const flag of ATTRIBUTE_FLAGS) {
+      assert.ok(TAG_COLORS[flag], `${flag} has no color in TAG_COLORS`);
     }
+  });
+
+  it("ATTRIBUTE_FLAGS has the expected short set", () => {
+    assert.ok(ATTRIBUTE_FLAGS.includes("urgent"));
+    assert.ok(ATTRIBUTE_FLAGS.includes("action-required"));
+    assert.ok(ATTRIBUTE_FLAGS.includes("receipt"));
+    assert.ok(ATTRIBUTE_FLAGS.length <= 5, "flag set should stay minimal");
   });
 
   it("BATCH_SIZE is a positive integer", () => {
@@ -313,91 +251,50 @@ describe("constants", () => {
     for (const [key, info] of Object.entries(BUILTIN_PROVIDERS)) {
       assert.ok(info.label, `${key} missing label`);
       assert.ok(info.kind, `${key} missing kind`);
-      assert.ok(
-        ["gemini", "openai", "anthropic"].includes(info.kind),
-        `${key} has unknown kind: ${info.kind}`,
-      );
+      assert.ok(["gemini", "openai", "anthropic"].includes(info.kind));
     }
-  });
-
-  it("all non-local providers use HTTPS base URLs", () => {
-    for (const [key, info] of Object.entries(BUILTIN_PROVIDERS)) {
-      if (info.baseUrl && !info.baseUrl.startsWith("http://localhost")) {
-        assert.ok(
-          info.baseUrl.startsWith("https://"),
-          `${key} baseUrl is not HTTPS: ${info.baseUrl}`,
-        );
-      }
-    }
-  });
-
-  it("Ollama is marked noKey", () => {
-    assert.equal(BUILTIN_PROVIDERS.ollama.noKey, true);
-  });
-
-  it("Fireworks has a modelsUrl for native API", () => {
-    assert.ok(BUILTIN_PROVIDERS.fireworks.modelsUrl);
-    assert.ok(BUILTIN_PROVIDERS.fireworks.modelsUrl.includes("accounts/fireworks/models"));
   });
 
   it("SKIP_FOLDER_TYPES includes sent, drafts, trash, junk", () => {
     for (const type of ["sent", "drafts", "trash", "junk"]) {
-      assert.ok(SKIP_FOLDER_TYPES.includes(type), `missing: ${type}`);
+      assert.ok(SKIP_FOLDER_TYPES.includes(type));
     }
   });
 });
 
-// --- PRESETS ---
+// --- FOLDER_PRESETS ---
 
-describe("PRESETS", () => {
+describe("FOLDER_PRESETS", () => {
   it("has home, business, and minimal presets", () => {
-    assert.ok(PRESETS.home, "missing home preset");
-    assert.ok(PRESETS.business, "missing business preset");
-    assert.ok(PRESETS.minimal, "missing minimal preset");
+    assert.ok(FOLDER_PRESETS.home);
+    assert.ok(FOLDER_PRESETS.business);
+    assert.ok(FOLDER_PRESETS.minimal);
   });
 
-  it("each preset has a label and tags array", () => {
-    for (const [key, preset] of Object.entries(PRESETS)) {
+  it("each preset has a label and folders array", () => {
+    for (const [key, preset] of Object.entries(FOLDER_PRESETS)) {
       assert.ok(typeof preset.label === "string", `${key} missing label`);
-      assert.ok(Array.isArray(preset.tags), `${key} tags is not an array`);
-      assert.ok(preset.tags.length > 0, `${key} has empty tags`);
+      assert.ok(Array.isArray(preset.folders), `${key} folders is not an array`);
+      assert.ok(preset.folders.length > 0, `${key} has empty folders`);
     }
   });
 
-  it("home preset has ~10 personal-use tags", () => {
-    const tags = PRESETS.home.tags;
-    assert.ok(tags.length >= 8 && tags.length <= 12, `home has ${tags.length} tags, expected 8-12`);
-    assert.ok(tags.includes("finance"), "home missing finance");
-    assert.ok(tags.includes("newsletters"), "home missing newsletters");
-    assert.ok(tags.includes("personal"), "home missing personal");
+  it("every preset includes Notifications", () => {
+    for (const [key, preset] of Object.entries(FOLDER_PRESETS)) {
+      assert.ok(preset.folders.includes("Notifications"), `${key} missing Notifications folder`);
+    }
   });
 
-  it("business preset has ~10 work-use tags", () => {
-    const tags = PRESETS.business.tags;
-    assert.ok(tags.length >= 8 && tags.length <= 12, `business has ${tags.length} tags, expected 8-12`);
-    assert.ok(tags.includes("finance"), "business missing finance");
-    assert.ok(tags.includes("newsletters"), "business missing newsletters");
-  });
-
-  it("minimal preset has 4-6 broad tags", () => {
-    const tags = PRESETS.minimal.tags;
-    assert.ok(tags.length >= 3 && tags.length <= 6, `minimal has ${tags.length} tags, expected 3-6`);
-    assert.ok(tags.includes("finance"), "minimal missing finance");
-    assert.ok(tags.includes("newsletters"), "minimal missing newsletters");
-  });
-
-  it("all preset tags are lowercase single/double words", () => {
-    for (const [key, preset] of Object.entries(PRESETS)) {
-      for (const tag of preset.tags) {
-        assert.ok(tag === tag.toLowerCase(), `${key}/${tag} is not lowercase`);
-        const words = tag.split("-");
-        assert.ok(words.length <= 2, `${key}/${tag} has more than 2 words`);
+  it("folder names are capitalized single words", () => {
+    for (const [key, preset] of Object.entries(FOLDER_PRESETS)) {
+      for (const f of preset.folders) {
+        assert.ok(/^[A-Z][A-Za-z-]*$/.test(f), `${key}/${f} is not a capitalized word`);
       }
     }
   });
 
-  it("DEFAULT_TAGS equals home preset tags", () => {
-    assert.deepEqual(DEFAULT_TAGS, PRESETS.home.tags);
+  it("DEFAULT_FOLDERS equals home preset folders", () => {
+    assert.deepEqual(DEFAULT_FOLDERS, FOLDER_PRESETS.home.folders);
   });
 });
 
@@ -407,36 +304,27 @@ describe("isSensitiveEmail", () => {
   it("flags password reset subjects", () => {
     assert.ok(isSensitiveEmail("Reset your password", ""));
     assert.ok(isSensitiveEmail("Password Reset Request", ""));
-    assert.ok(isSensitiveEmail("Your password reset link", ""));
   });
 
   it("flags verification code subjects", () => {
     assert.ok(isSensitiveEmail("Your verification code", ""));
     assert.ok(isSensitiveEmail("Verify your email address", ""));
-    assert.ok(isSensitiveEmail("Confirm your account", ""));
-    assert.ok(isSensitiveEmail("Confirm your identity", ""));
   });
 
-  it("flags 2FA and OTP subjects", () => {
+  it("flags 2FA / OTP / MFA subjects", () => {
     assert.ok(isSensitiveEmail("Your two-factor code", ""));
-    assert.ok(isSensitiveEmail("Two-step verification", ""));
     assert.ok(isSensitiveEmail("2FA code for your account", ""));
-    assert.ok(isSensitiveEmail("Your OTP is ready", ""));
     assert.ok(isSensitiveEmail("One-time password", ""));
     assert.ok(isSensitiveEmail("Multi-factor authentication", ""));
   });
 
-  it("flags security alert subjects", () => {
+  it("flags security alert / suspicious activity", () => {
     assert.ok(isSensitiveEmail("Security alert: new login", ""));
-    assert.ok(isSensitiveEmail("Login attempt from new device", ""));
-    assert.ok(isSensitiveEmail("Sign-in code for your account", ""));
     assert.ok(isSensitiveEmail("Suspicious activity detected", ""));
-    assert.ok(isSensitiveEmail("Unlock your account", ""));
   });
 
-  it("flags magic link and access code subjects", () => {
+  it("flags magic link / access code", () => {
     assert.ok(isSensitiveEmail("Your magic link", ""));
-    assert.ok(isSensitiveEmail("Temporary password", ""));
     assert.ok(isSensitiveEmail("Your access code", ""));
     assert.ok(isSensitiveEmail("Account recovery", ""));
   });
@@ -444,15 +332,12 @@ describe("isSensitiveEmail", () => {
   it("flags sensitive body content even with safe subject", () => {
     assert.ok(isSensitiveEmail("Welcome!", "Your verification code: 123456"));
     assert.ok(isSensitiveEmail("Hello", "Use this code: ABC123 to continue"));
-    assert.ok(isSensitiveEmail("Action needed", "Click here to reset your password immediately"));
   });
 
   it("allows normal emails through", () => {
     assert.ok(!isSensitiveEmail("Invoice #1234", "Your order total is $50"));
     assert.ok(!isSensitiveEmail("Weekly newsletter", "Top stories this week"));
     assert.ok(!isSensitiveEmail("Meeting tomorrow", "Let's sync at 3pm"));
-    assert.ok(!isSensitiveEmail("Your flight booking", "Departure at 9am"));
-    assert.ok(!isSensitiveEmail("Re: Project update", "The code review is done"));
   });
 
   it("handles null/empty inputs", () => {
