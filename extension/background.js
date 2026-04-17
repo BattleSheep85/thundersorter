@@ -526,6 +526,14 @@ messenger.runtime.onMessage.addListener((msg) => {
 
 // --- Batch classification with progress ---
 
+// Tunables for batched LLM classification.
+// BATCH_SIZE: emails per API call. Keep small enough that a 4k-char-capped
+//             body × N fits comfortably in a single request.
+// CONCURRENCY: number of in-flight batches. Anthropic/Gemini/OpenAI free/paid
+//             tiers all tolerate 4 concurrent requests without rate-limiting.
+const LLM_BATCH_SIZE = 10;
+const LLM_CONCURRENCY = 4;
+
 async function classifyBatchWithProgress(messages) {
   cancelRequested = false;
 
@@ -557,22 +565,27 @@ async function classifyBatchWithProgress(messages) {
 
   sendProgress(windowId, 0, total, 0, "");
 
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 1: local tiers (headers + sender cache + security filter).
+  // No API calls. Each message ends up with either a resolved folder
+  // or flagged `needsLLM: true`, in which case we've already extracted
+  // its body so Phase 2 can send it to the provider.
+  // ──────────────────────────────────────────────────────────────────
+  const resolutions = [];
   for (const msg of untagged) {
     if (cancelRequested) {
-      console.log("Thundersorter: classification cancelled by user");
       sendDone(windowId, total, tagged, true);
       return tagged;
     }
-
-    sendProgress(windowId, processed, total, tagged, msg.subject || "");
 
     const diagInfo = { allowedFolders };
     let tier = "";
     let folder = "";
     let flags = [];
+    let needsLLM = false;
+    let body = "";
 
     try {
-      // Tier 0: Header-based pre-classification
       try {
         const headers = await getMessageHeaders(msg.id);
         const headerFolder = classifyFromHeaders(headers);
@@ -583,7 +596,6 @@ async function classifyBatchWithProgress(messages) {
         }
       } catch (_) { /* header scan failed, continue */ }
 
-      // Tier 1: Sender cache
       if (!folder) {
         const cached = await lookupSenderCache(msg.author || "");
         if (cached && allowedFolders.includes(cached.folder)) {
@@ -593,50 +605,131 @@ async function classifyBatchWithProgress(messages) {
         }
       }
 
-      // Tier 2: LLM classification (individual call)
       if (!folder) {
-        const body = await extractBody(msg.id);
-
+        body = await extractBody(msg.id);
         if (isSensitiveEmail(msg.subject, body)) {
           tier = "security-filter";
           diagInfo.skippedReason = "sensitive (password/token/verification)";
           if (allowedFolders.includes("Notifications")) folder = "Notifications";
         } else {
-          const llm = await provider.mod.classify(
-            provider.config,
-            msg.subject || "",
-            msg.author || "",
-            body,
-            allowedFolders,
-          );
-          tier = "llm";
-          diagInfo.llmFolder = llm.folder;
-          diagInfo.llmFlags = llm.flags || [];
-          folder = llm.folder;
-          flags = llm.flags || [];
+          needsLLM = true;
         }
       }
+    } catch (err) {
+      diagInfo.phase1Error = err.message;
+    }
 
-      storeDiagnostic(msg.id, diagInfo);
+    resolutions.push({ msg, diagInfo, folder, flags, tier, needsLLM, body });
+  }
 
-      if (folder || flags.length > 0) {
-        if (flags.length > 0) await applyTags(msg, flags);
-        if (folder) {
-          await updateSenderCache(msg.author || "", folder);
-          await routeMessageToFolder(msg, folder);
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 2: batched, concurrent LLM classification.
+  // Messages are grouped into batches of LLM_BATCH_SIZE; up to
+  // LLM_CONCURRENCY batches are in flight at once. One batch failure
+  // is isolated to its own messages (retry-queued in Phase 3).
+  // ──────────────────────────────────────────────────────────────────
+  const llmItems = resolutions.filter((r) => r.needsLLM);
+  if (llmItems.length > 0) {
+    const batches = [];
+    for (let i = 0; i < llmItems.length; i += LLM_BATCH_SIZE) {
+      batches.push(llmItems.slice(i, i + LLM_BATCH_SIZE));
+    }
+
+    let llmDone = 0;
+    const phase1Done = resolutions.length - llmItems.length;
+    // Report "we're starting AI classification for N emails".
+    sendProgress(windowId, phase1Done, total, tagged, `Classifying ${llmItems.length} via AI…`, "llm");
+
+    for (let i = 0; i < batches.length; i += LLM_CONCURRENCY) {
+      if (cancelRequested) break;
+
+      const slice = batches.slice(i, i + LLM_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        slice.map((batch) =>
+          provider.mod.classifyBatch(
+            provider.config,
+            batch.map((item) => ({
+              subject: item.msg.subject || "",
+              sender: item.msg.author || "",
+              body: item.body,
+            })),
+            allowedFolders,
+          ),
+        ),
+      );
+
+      for (let bi = 0; bi < slice.length; bi++) {
+        const batch = slice[bi];
+        const res = settled[bi];
+        if (res.status === "fulfilled") {
+          const batchResults = res.value || [];
+          for (let ei = 0; ei < batch.length; ei++) {
+            const item = batch[ei];
+            const r = batchResults[ei];
+            if (r) {
+              item.folder = r.folder;
+              item.flags = r.flags || [];
+              item.tier = "llm";
+              item.diagInfo.llmFolder = r.folder;
+              item.diagInfo.llmFlags = r.flags || [];
+            } else {
+              item.diagInfo.providerError = "missing result in batch";
+            }
+          }
+        } else {
+          const errMsg = res.reason?.message || String(res.reason);
+          console.warn(`Thundersorter: batch classify failed:`, errMsg);
+          for (const item of batch) {
+            item.diagInfo.providerError = errMsg;
+          }
+        }
+        llmDone += batch.length;
+      }
+
+      sendProgress(windowId, phase1Done + llmDone, total, tagged, `Classifying ${llmItems.length} via AI…`, "llm");
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 3: apply tags + route + update sender cache. Sequential to
+  // avoid flooding the Thunderbird API with concurrent writes.
+  // ──────────────────────────────────────────────────────────────────
+  for (const r of resolutions) {
+    if (cancelRequested) {
+      sendDone(windowId, total, tagged, true);
+      return tagged;
+    }
+
+    storeDiagnostic(r.msg.id, r.diagInfo);
+
+    if (r.diagInfo.providerError) {
+      console.warn(`Thundersorter: classify failed for ${r.msg.id}: ${r.diagInfo.providerError}`);
+      await addToRetryQueue(r.msg.id);
+      processed++;
+      sendProgress(windowId, processed, total, tagged, "", r.tier);
+      continue;
+    }
+
+    sendProgress(windowId, processed, total, tagged, r.msg.subject || "");
+
+    try {
+      if (r.folder || r.flags.length > 0) {
+        if (r.flags.length > 0) await applyTags(r.msg, r.flags);
+        if (r.folder) {
+          await updateSenderCache(r.msg.author || "", r.folder);
+          await routeMessageToFolder(r.msg, r.folder);
         }
         tagged++;
         classifiedCount++;
       }
     } catch (err) {
-      diagInfo.providerError = err.message;
-      storeDiagnostic(msg.id, diagInfo);
-      console.warn(`Thundersorter: classify failed for ${msg.id}:`, err.message);
-      await addToRetryQueue(msg.id);
+      r.diagInfo.applyError = err.message;
+      storeDiagnostic(r.msg.id, r.diagInfo);
+      console.warn(`Thundersorter: apply failed for ${r.msg.id}:`, err.message);
     }
 
     processed++;
-    sendProgress(windowId, processed, total, tagged, "", tier);
+    sendProgress(windowId, processed, total, tagged, "", r.tier);
   }
 
   sendDone(windowId, total, tagged, false);

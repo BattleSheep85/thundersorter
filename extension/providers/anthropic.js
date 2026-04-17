@@ -28,14 +28,22 @@ function authHeaders(apiKey) {
   return { ...ANTHROPIC_HEADERS, "x-api-key": apiKey };
 }
 
-async function createMessage(config, systemPrompt, userContent) {
+async function createMessage(config, systemPrompt, userContent, options = {}) {
+  const maxTokens = options.maxTokens ?? 1024;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: authHeaders(config.apiKey),
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 1024,
-      system: systemPrompt,
+      max_tokens: maxTokens,
+      // System prompt is stable across calls for a given folder set; marking
+      // it cacheable lets Anthropic reuse the prefix on repeat classification.
+      // (At Haiku's 2048-token cache minimum the current prompt is too small
+      // to actually cache — but if the prompt grows, or future models drop
+      // the minimum, this kicks in automatically with zero code change.)
+      system: [
+        { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+      ],
       messages: [{ role: "user", content: userContent }],
       temperature: 0.1,
     }),
@@ -77,7 +85,10 @@ export async function classifyBatch(config, emails, folders) {
     .map((e, i) => `Email ${i + 1}:\n${formatEmail(e.subject, e.sender, e.body)}`)
     .join("\n---\n");
 
-  const text = await createMessage(config, prompt, numbered);
+  // Each email's JSON response is ~40-80 tokens; give headroom for the outer
+  // envelope and the rare long flag list. Cap floor at the single-call default.
+  const maxTokens = Math.max(1024, emails.length * 100 + 256);
+  const text = await createMessage(config, prompt, numbered, { maxTokens });
   const result = safeParseJSON(text);
   const resultsArr = result.results || result.emails || [];
   const results = resultsArr.map((r) => {
